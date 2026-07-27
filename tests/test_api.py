@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("torch")
 
-from e2m import Dataset, MutationModel
+from e2m import Dataset, E2MModel, TmbModel
 
 
 def _synthetic():
@@ -26,7 +26,7 @@ def _synthetic():
     return expression, mutations
 
 
-def _fast(model: MutationModel) -> MutationModel:
+def _fast(model: E2MModel) -> E2MModel:
     model.hyperparameters.update({"epochs": 2, "batch_size": 16, "hidden_layers": [8]})
     model.config["evaluation"]["cv_folds"] = 3
     return model
@@ -47,7 +47,7 @@ def test_model_receives_dataset_fit_and_predict():
     expression, mutations = _synthetic()
     data = Dataset(expression=expression, mutations=mutations)
     train = data.subset(samples=expression.index[:35])
-    model = _fast(MutationModel()).fit(train)          # receives a Dataset
+    model = _fast(E2MModel()).fit(train)          # receives a Dataset
     probs = model.predict(data.subset(samples=expression.index[35:]))
     assert isinstance(probs, pd.DataFrame)
     assert probs.shape == (10, 3)
@@ -59,12 +59,12 @@ def test_model_receives_dataset_fit_and_predict():
 def test_cross_validate_returns_metrics_frame(tmp_path):
     expression, mutations = _synthetic()
     data = Dataset(expression=expression, mutations=mutations)
-    metrics = _fast(MutationModel()).cross_validate(data)
+    metrics = _fast(E2MModel()).cross_validate(data)
     assert isinstance(metrics, pd.DataFrame)
     assert {"auprc", "normalized_auprc", "roc_auc"}.issubset(metrics.columns)
     assert list(metrics.index) == ["TP53", "KRAS", "EGFR"]
     # with an output path it also writes the out-of-fold tables
-    _fast(MutationModel()).cross_validate(data, output=tmp_path / "cv")
+    _fast(E2MModel()).cross_validate(data, output=tmp_path / "cv")
     assert (tmp_path / "cv" / "metrics.csv").exists()
     assert (tmp_path / "cv" / "oof_probabilities.csv").exists()
 
@@ -72,10 +72,41 @@ def test_cross_validate_returns_metrics_frame(tmp_path):
 def test_model_save_load_roundtrip(tmp_path):
     expression, mutations = _synthetic()
     data = Dataset(expression=expression, mutations=mutations)
-    model = _fast(MutationModel()).fit(data)
+    model = _fast(E2MModel()).fit(data)
     model.save(tmp_path / "model")
     assert (tmp_path / "model" / "model.pt").exists()
-    reloaded = MutationModel.load(tmp_path / "model")
+    reloaded = E2MModel.load(tmp_path / "model")
     a = model.predict(expression.iloc[:5]).values
     b = reloaded.predict(expression.iloc[:5]).values
     np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-5)
+
+
+def _dataset_with_tmb():
+    expression, mutations = _synthetic()
+    rng = np.random.default_rng(1)
+    raw = rng.integers(1, 60, size=len(expression))
+    tmb = pd.DataFrame({"TMB": raw, "TMB_log2": np.log2(raw + 1.0)}, index=expression.index)
+    return Dataset(expression=expression, mutations=mutations, tmb=tmb)
+
+
+@pytest.mark.parametrize("backend", ["random_forest", "gradient_boosting"])
+def test_tmb_model_backends_fit_predict_cv(backend, tmp_path):
+    data = _dataset_with_tmb()
+    model = TmbModel(backend=backend, n_estimators=5, random_state=0)
+    model.config["evaluation"]["cv_folds"] = 3
+    model.fit(data)
+    pred = model.predict(data)
+    assert list(pred.columns) == ["TMB_log2_pred", "TMB_pred"]
+    assert pred.shape[0] == len(data.expression)
+    summary = model.cross_validate(data, output=tmp_path / f"tmb_{backend}")
+    assert (summary["cancer"] == "__OVERALL__").any()
+    assert (tmp_path / f"tmb_{backend}" / "summary.csv").exists()
+
+
+def test_tmb_default_backend_is_xgboost():
+    pytest.importorskip("xgboost")
+    data = _dataset_with_tmb()
+    model = TmbModel(n_estimators=3, max_depth=2, n_jobs=1)
+    assert model.backend == "xgboost"
+    model.fit(data)
+    assert model.predict(data).shape[0] == len(data.expression)

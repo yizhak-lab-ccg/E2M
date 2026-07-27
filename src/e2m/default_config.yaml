@@ -60,6 +60,22 @@ model:
     learning_rate: 0.1
     random_state: 42
     n_jobs: -1
+  # TMB regression backend: xgboost | lightgbm | random_forest | gradient_boosting.
+  # Each backend reads its own parameter block below (xgboost reuses the block above).
+  tmb_backend: "xgboost"
+  lightgbm:
+    n_estimators: 300
+    learning_rate: 0.1
+    random_state: 42
+    n_jobs: -1
+  random_forest:
+    n_estimators: 400
+    random_state: 42
+    n_jobs: -1
+  gradient_boosting:
+    n_estimators: 300
+    learning_rate: 0.1
+    random_state: 42
 
 evaluation:
   cv_folds: 5

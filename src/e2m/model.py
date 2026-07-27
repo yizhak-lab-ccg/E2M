@@ -1,4 +1,4 @@
-"""The :class:`MutationModel` — a multitask model you fit on a :class:`Dataset`."""
+"""The :class:`E2MModel` — a multitask model you fit on a :class:`Dataset`."""
 
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ def _expression_mutations(data, mutations):
     return data.expression, data.mutations if mutations is None else mutations
 
 
-class MutationModel:
+class E2MModel:
     """Predict gene mutation status from RNA expression with a multitask network.
 
     Fit it on a :class:`Dataset` (or expression/mutation frames), then predict on
     any dataset or samples-by-genes matrix; input genes are aligned to the training
     features by symbol. Model settings come from ``config`` (the packaged defaults by
-    default); pass keyword hyperparameters to override, e.g. ``MutationModel(epochs=50)``.
+    default); pass keyword hyperparameters to override, e.g. ``E2MModel(epochs=50)``.
     """
 
     def __init__(self, config: Optional[dict] = None, **hyperparameters):
@@ -46,11 +46,11 @@ class MutationModel:
         self.metadata: dict = {}
 
     # ------------------------------------------------------------------ fit
-    def fit(self, data, mutations=None) -> "MutationModel":
+    def fit(self, data, mutations=None) -> "E2MModel":
         """Train on a :class:`Dataset` (or ``expression`` + ``mutations`` frames)."""
         expression, mutations = _expression_mutations(data, mutations)
         if mutations is None:
-            raise ValueError("MutationModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
+            raise ValueError("E2MModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
         settings = model_settings(self.config, self.hyperparameters)
         network = _MultitaskNetwork(expression.shape[1], mutations.shape[1], **settings)
         network.fit_full(expression.values, mutations.values)
@@ -136,7 +136,7 @@ class MutationModel:
         return output
 
     @classmethod
-    def load(cls, model_dir) -> "MutationModel":
+    def load(cls, model_dir) -> "E2MModel":
         directory = Path(model_dir)
         metadata = json.loads((directory / "model_metadata.json").read_text(encoding="utf-8"))
         model = cls(config=metadata.get("training_config"))
@@ -149,9 +149,95 @@ class MutationModel:
 
     def _check_fitted(self) -> None:
         if self.network is None:
-            raise ValueError("Model is not fitted. Call fit(dataset) or MutationModel.load(dir).")
+            raise ValueError("Model is not fitted. Call fit(dataset) or E2MModel.load(dir).")
 
     def __repr__(self) -> str:
         state = "fitted" if self.network is not None else "unfitted"
         targets = 0 if self.targets is None else len(self.targets)
-        return f"MutationModel({state}, targets={targets})"
+        return f"E2MModel({state}, targets={targets})"
+
+
+def _expression_tmb(data, tmb):
+    if isinstance(data, pd.DataFrame):
+        return data, tmb
+    return data.expression, (data.tmb if tmb is None else tmb)
+
+
+class TmbModel:
+    """Predict tumor mutational burden — ``log2(TMB + 1)`` — from expression.
+
+    Fit it on a :class:`Dataset` (which carries ``tmb``) or on ``expression`` + a
+    ``tmb`` table with a ``TMB_log2`` column. The tree ``backend`` is one of
+    ``xgboost`` (default), ``lightgbm``, ``random_forest``, or ``gradient_boosting``;
+    each reads its parameter block from ``config['model']``. Samples without a TMB
+    label are dropped. ``predict`` returns ``TMB_log2_pred`` and ``TMB_pred``.
+    """
+
+    def __init__(self, backend: Optional[str] = None, config: Optional[dict] = None, **params):
+        self.config = config if config is not None else resolve_config()
+        self.backend = backend or self.config["model"].get("tmb_backend", "xgboost")
+        self.params = params
+        self.regressor = None
+        self.features: Optional[list] = None
+        self.feature_means: Optional[np.ndarray] = None
+
+    def _resolved_params(self) -> dict:
+        from .tmb import tmb_backend_params
+
+        _, base = tmb_backend_params(self.config, self.backend)
+        base.update(self.params)
+        return base
+
+    def fit(self, data, tmb=None) -> "TmbModel":
+        from .backends import make_regressor
+
+        expression, labels = _expression_tmb(data, tmb)
+        if labels is None:
+            raise ValueError("TmbModel.fit needs TMB labels (a Dataset with tmb, or tmb=).")
+        index = labels.index[labels["TMB_log2"].notna()]
+        expression = expression.loc[index]
+        self.regressor = make_regressor(self.backend, self._resolved_params())
+        self.regressor.fit(expression.values, labels.loc[index, "TMB_log2"].to_numpy())
+        self.features = expression.columns.tolist()
+        self.feature_means = expression.mean(axis=0).to_numpy(dtype=np.float32)
+        return self
+
+    def predict(self, data) -> pd.DataFrame:
+        if self.regressor is None:
+            raise ValueError("Model is not fitted. Call fit(dataset).")
+        expression = _expression(data)
+        aligned = expression.reindex(columns=self.features)
+        aligned = aligned.fillna(pd.Series(self.feature_means, index=self.features)).astype(np.float32)
+        predicted = self.regressor.predict(aligned.values)
+        return pd.DataFrame(
+            {"TMB_log2_pred": predicted, "TMB_pred": np.maximum(np.power(2.0, predicted) - 1.0, 0.0)},
+            index=aligned.index,
+        )
+
+    def cross_validate(self, data, tmb=None, cancer=None, output=None) -> pd.DataFrame:
+        """Held-out TMB regression; returns the per-cancer + overall summary table."""
+        from .tmb import run_tmb_cv, write_tmb
+
+        expression, labels = _expression_tmb(data, tmb)
+        if labels is None:
+            raise ValueError("cross_validate needs TMB labels (a Dataset with tmb, or tmb=).")
+        if cancer is None:
+            cancer = getattr(data, "cancer", None)
+        if cancer is None:
+            cancer = pd.Series("cohort", index=expression.index, name="cancer")
+        index = labels.index[labels["TMB_log2"].notna()]
+        summary, predictions, fold_metrics, metadata = run_tmb_cv(
+            expression.loc[index],
+            labels.loc[index],
+            cancer.loc[index],
+            self.config,
+            backend=self.backend,
+            params=self._resolved_params(),
+        )
+        if output is not None:
+            write_tmb(output, summary, predictions, fold_metrics, metadata)
+        return summary
+
+    def __repr__(self) -> str:
+        state = "fitted" if self.regressor is not None else "unfitted"
+        return f"TmbModel(backend={self.backend!r}, {state})"

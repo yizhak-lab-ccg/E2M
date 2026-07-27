@@ -29,6 +29,9 @@ dependencies = [
 interpretation = [
     "shap>=0.45",
 ]
+lightgbm = [
+    "lightgbm>=4.0",
+]
 test = [
     "pytest>=8",
 ]

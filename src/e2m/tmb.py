@@ -8,6 +8,7 @@ import pandas as pd
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+from .backends import make_regressor
 from .splits import make_folds
 
 
@@ -43,13 +44,18 @@ def metric_summary(y_true, y_pred, min_n: int = 3) -> dict:
     return result
 
 
-def run_tmb_cross_validation(expression, tmb, cancer, config, output_dir) -> dict:
-    try:
-        import xgboost as xgb
-    except ImportError as exc:
-        raise ImportError("TMB prediction requires xgboost, a core dependency. Reinstall with: pip install -e .") from exc
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
+def tmb_backend_params(config: dict, backend: str | None = None):
+    """Resolve the TMB regression backend and its parameters from a config."""
+    backend = backend or config["model"].get("tmb_backend", "xgboost")
+    section = "xgboost" if backend == "xgboost" else backend
+    return backend, dict(config["model"].get(section, {}))
+
+
+def run_tmb_cv(expression, tmb, cancer, config, backend=None, params=None):
+    """Core out-of-fold TMB regression. Returns (summary, predictions, fold_metrics, metadata)."""
+    resolved_backend, resolved_params = tmb_backend_params(config, backend)
+    if params is not None:
+        resolved_params = dict(params)
     folds = int(config["evaluation"].get("cv_folds", 5))
     random_state = int(config["preprocessing"].get("random_state", 42))
     split_iterator, split_method = make_folds(cancer, folds, random_state)
@@ -57,9 +63,8 @@ def run_tmb_cross_validation(expression, tmb, cancer, config, output_dir) -> dic
     out_of_fold = np.full(len(expression), np.nan)
     fold_ids = np.full(len(expression), -1, dtype=int)
     fold_rows = []
-    parameters = {"objective": "reg:squarederror", **config["model"].get("xgboost", {})}
     for fold, (train_index, test_index) in enumerate(split_iterator, start=1):
-        model = xgb.XGBRegressor(**parameters)
+        model = make_regressor(resolved_backend, resolved_params)
         model.fit(expression.iloc[train_index], truth[train_index])
         prediction = model.predict(expression.iloc[test_index])
         out_of_fold[test_index] = prediction
@@ -79,17 +84,9 @@ def run_tmb_cross_validation(expression, tmb, cancer, config, output_dir) -> dic
     )
     summaries = [{"cancer": "__OVERALL__", **metric_summary(truth, out_of_fold)}]
     for cancer_code, subset in predictions.groupby("cancer"):
-        summaries.append(
-            {
-                "cancer": cancer_code,
-                **metric_summary(subset["TMB_log2_true"], subset["TMB_log2_pred"]),
-            }
-        )
+        summaries.append({"cancer": cancer_code, **metric_summary(subset["TMB_log2_true"], subset["TMB_log2_pred"])})
     summary = pd.DataFrame(summaries)
     fold_metrics = pd.DataFrame(fold_rows)
-    predictions.to_csv(output / "oof_predictions.csv", index=False)
-    summary.to_csv(output / "summary.csv", index=False)
-    fold_metrics.to_csv(output / "fold_metrics.csv", index=False)
     metadata = {
         "n_samples": len(expression),
         "n_features": expression.shape[1],
@@ -97,7 +94,23 @@ def run_tmb_cross_validation(expression, tmb, cancer, config, output_dir) -> dic
         "split_method": split_method,
         "target": "log2(coding TMB + 1)",
         "samples_without_coding_mutation_events": "dropped",
-        "model": parameters,
+        "model": {"backend": resolved_backend, **resolved_params},
     }
+    return summary, predictions, fold_metrics, metadata
+
+
+def write_tmb(output_dir, summary, predictions, fold_metrics, metadata) -> Path:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(output / "oof_predictions.csv", index=False)
+    summary.to_csv(output / "summary.csv", index=False)
+    fold_metrics.to_csv(output / "fold_metrics.csv", index=False)
     (output / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return output
+
+
+def run_tmb_cross_validation(expression, tmb, cancer, config, output_dir) -> dict:
+    """Functional entry point used by the CLI: run TMB CV, write files, return metadata."""
+    summary, predictions, fold_metrics, metadata = run_tmb_cv(expression, tmb, cancer, config)
+    write_tmb(output_dir, summary, predictions, fold_metrics, metadata)
     return metadata
