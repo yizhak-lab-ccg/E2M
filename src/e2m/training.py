@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
 from .metrics import evaluate_predictions
 from .models import MultitaskModel
 from .splits import make_folds
@@ -18,16 +19,12 @@ def model_settings(config: dict, overrides: dict | None = None) -> dict:
     return settings
 
 
-def cross_validate(
-    expression: pd.DataFrame,
-    mutations: pd.DataFrame,
-    cancer: pd.Series,
-    config: dict,
-    output_dir: str | Path,
-    model_overrides: dict | None = None,
-) -> dict:
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
+def run_cross_validation(expression, mutations, cancer, config, model_overrides=None):
+    """Core out-of-fold multitask cross-validation.
+
+    Returns ``(metrics, probabilities, predictions, fold_assignments, metadata)`` in
+    memory. Nothing is written; callers decide what to keep or persist.
+    """
     folds = int(config["evaluation"].get("cv_folds", 5))
     random_state = int(config["preprocessing"].get("random_state", 42))
     if len(expression) < folds:
@@ -47,15 +44,10 @@ def cross_validate(
         probabilities[test_index] = fold_probabilities
         fold_number[test_index] = fold
 
-    probability_frame = pd.DataFrame(probabilities, index=expression.index, columns=mutations.columns)
-    prediction_frame = pd.DataFrame(predictions, index=expression.index, columns=mutations.columns)
+    prob_frame = pd.DataFrame(probabilities, index=expression.index, columns=mutations.columns)
+    pred_frame = pd.DataFrame(predictions, index=expression.index, columns=mutations.columns)
     metrics = evaluate_predictions(mutations.values, predictions, probabilities, mutations.columns)
-    probability_frame.to_csv(output / "oof_probabilities.csv")
-    prediction_frame.to_csv(output / "oof_predictions.csv")
-    metrics.to_csv(output / "metrics.csv")
-    pd.DataFrame({"sample_id": expression.index, "fold": fold_number, "cancer": cancer.values}).to_csv(
-        output / "fold_assignments.csv", index=False
-    )
+    fold_frame = pd.DataFrame({"sample_id": expression.index, "fold": fold_number, "cancer": cancer.values})
     metadata = {
         "n_samples": len(expression),
         "n_features": expression.shape[1],
@@ -64,18 +56,30 @@ def cross_validate(
         "split_method": split_method,
         "model": settings,
     }
+    return metrics, prob_frame, pred_frame, fold_frame, metadata
+
+
+def write_cross_validation(output_dir, metrics, prob_frame, pred_frame, fold_frame, metadata) -> Path:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    prob_frame.to_csv(output / "oof_probabilities.csv")
+    pred_frame.to_csv(output / "oof_predictions.csv")
+    metrics.to_csv(output / "metrics.csv")
+    fold_frame.to_csv(output / "fold_assignments.csv", index=False)
     (output / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return output
+
+
+def cross_validate(expression, mutations, cancer, config, output_dir, model_overrides=None) -> dict:
+    """Functional entry point used by the CLI: run CV, write files, return metadata."""
+    metrics, prob_frame, pred_frame, fold_frame, metadata = run_cross_validation(
+        expression, mutations, cancer, config, model_overrides
+    )
+    write_cross_validation(output_dir, metrics, prob_frame, pred_frame, fold_frame, metadata)
     return metadata
 
 
-def train_full(
-    expression: pd.DataFrame,
-    mutations: pd.DataFrame,
-    config: dict,
-    output_dir: str | Path,
-    metadata: dict,
-    model_overrides: dict | None = None,
-) -> dict:
+def train_full(expression, mutations, config, output_dir, metadata, model_overrides=None) -> dict:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     settings = model_settings(config, model_overrides)
