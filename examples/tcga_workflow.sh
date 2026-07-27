@@ -6,16 +6,16 @@ DATA_DIR="./e2m_data"
 RESULT_DIR="results/luad"
 MODEL_DIR="models/luad"
 
-e2m download --cancer "$CANCER" --expression-dataset star_counts --transform raw \
+e2m download --cancer "$CANCER" --expression-dataset star_counts --transform log1p \
   --data-dir "$DATA_DIR" --output "$RESULT_DIR/data"
 
-e2m cv --cancer "$CANCER" --expression-dataset star_counts --transform raw \
+e2m cv --cancer "$CANCER" --expression-dataset star_counts --transform log1p \
   --data-dir "$DATA_DIR" --output "$RESULT_DIR/mutation_cv"
 
-e2m tmb --cancer "$CANCER" --expression-dataset star_counts --transform raw \
+e2m tmb --cancer "$CANCER" --expression-dataset star_counts --transform log1p \
   --data-dir "$DATA_DIR" --output "$RESULT_DIR/tmb_cv"
 
-e2m train --cancer "$CANCER" --expression-dataset star_counts --transform raw \
+e2m train --cancer "$CANCER" --expression-dataset star_counts --transform log1p \
   --data-dir "$DATA_DIR" --output "$MODEL_DIR"
 
 e2m explain --model-dir "$MODEL_DIR" --target TP53 --method xgboost \

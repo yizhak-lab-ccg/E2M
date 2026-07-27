@@ -159,6 +159,31 @@ e2m predict --model-dir models/luad \
 
 The input must have sample identifiers in the first column and gene symbols in the header. Use STAR count values processed in the same way as the training data. The output contains one mutation probability per retained target.
 
+## 11. The same workflow as objects
+
+Every step above is also available through the Python objects, which return pandas
+directly instead of writing files. A `Dataset` holds the aligned expression, mutation,
+and TMB tables; an `E2MModel` and a `TmbModel` are fitted on a dataset and predict on any
+dataset or samples-by-genes matrix.
+
+```python
+from e2m import Dataset, E2MModel, TmbModel
+
+data = Dataset.from_tcga(["LUAD"], data_dir="./e2m_data")   # .expression / .mutations / .tmb / .cancer
+
+train = data.subset(samples=data.samples[:400])
+model = E2MModel().fit(train)                               # or E2MModel(epochs=50)
+model.predict(data.subset(samples=data.samples[400:]))     # probabilities DataFrame
+model.cross_validate(data)                                 # metrics DataFrame
+model.save("models/luad")                                  # reload with E2MModel.load(...)
+
+TmbModel(backend="lightgbm").cross_validate(data)          # xgboost/lightgbm/random_forest/gradient_boosting
+```
+
+See section 8 of [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) for a runnable
+version, and [examples/external_transfer.py](examples/external_transfer.py) for predicting on an
+external (GEO) cohort with a TCGA-trained model.
+
 ## Changing parameters
 
 The command line exposes the main choices. Use a YAML configuration file for less common settings:
