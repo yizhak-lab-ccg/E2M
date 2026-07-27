@@ -47,7 +47,7 @@ def run_tmb_cross_validation(expression, tmb, cancer, config, output_dir) -> dic
     try:
         import xgboost as xgb
     except ImportError as exc:
-        raise ImportError('TMB prediction requires: pip install -e ".[tmb]"') from exc
+        raise ImportError("TMB prediction requires xgboost, a core dependency. Reinstall with: pip install -e .") from exc
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     folds = int(config["evaluation"].get("cv_folds", 5))

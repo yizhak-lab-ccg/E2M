@@ -113,7 +113,7 @@ def _explain_xgboost(shap, expression, labels, explained_expression, settings):
     try:
         import xgboost as xgb
     except ImportError as exc:
-        raise ImportError('XGBoost SHAP requires: pip install -e ".[interpretation]"') from exc
+        raise ImportError("XGBoost SHAP requires xgboost, a core dependency. Reinstall with: pip install -e .") from exc
     y = labels.astype(int).to_numpy()
     if len(np.unique(y)) < 2:
         raise ValueError("The selected mutation target has only one class.")

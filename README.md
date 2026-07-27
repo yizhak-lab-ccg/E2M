@@ -6,58 +6,75 @@ The main mutation model is a multitask neural network. A shared encoder learns a
 
 RNA expression can contain signals from tumor cells, stromal cells, immune cells, cancer subtype, and co-occurring mutations. A prediction or SHAP association should not automatically be interpreted as a direct effect of a mutation.
 
-## Install
+## Installation
+
+Python 3.10 or newer is required. Clone the repository and create an isolated environment with either Conda or venv. `pip install -e .` is an editable install from the clone.
+
+### Conda
 
 ```bash
 git clone https://github.com/asafpinhasitechnion/E2M.git
 cd E2M
-pip install -e ".[interpretation]"
-```
 
-Python 3.10 or newer is required. Install into whichever environment you prefer. With conda:
-
-```bash
 conda create -n e2m python=3.10
 conda activate e2m
+pip install -e .
+```
+
+`pip install -e .` installs mutation prediction and TMB prediction. To also use SHAP interpretation, install the optional extra:
+
+```bash
 pip install -e ".[interpretation]"
 ```
 
-Or with `venv`:
+The `interpretation` extra adds SHAP. XGBoost is a core dependency, so both TMB prediction and the XGBoost SHAP workflow work without the extra.
+
+### venv
 
 ```bash
+git clone https://github.com/asafpinhasitechnion/E2M.git
+cd E2M
+
 python -m venv .venv
 source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -e ".[interpretation]"
+pip install -e .
 ```
 
-Or from the bundled environment file (the dependencies still install via pip):
+For SHAP interpretation, install `pip install -e ".[interpretation]"`.
+
+### Conda environment file
 
 ```bash
+git clone https://github.com/asafpinhasitechnion/E2M.git
+cd E2M
+
 conda env create -f environment.yml
 conda activate e2m
 ```
 
-The `interpretation` option installs SHAP and XGBoost. It also provides the XGBoost dependency used for TMB prediction.
+The environment file creates the Conda environment and installs the package, with the interpretation extra, through pip.
 
-Check the command line interface:
+### Verify the installation
+
+Check that the command-line interface is available:
 
 ```bash
 e2m --help
 ```
 
-Run a small offline neural-network check:
+Run the lightweight synthetic check:
 
 ```bash
 python examples/synthetic_quickstart.py
 ```
 
-With the optional interpretation dependencies installed, run the full synthetic runtime check:
+When the interpretation dependencies are installed, run the full runtime check:
 
 ```bash
 python examples/full_runtime_check.py
 ```
 
-The full check covers model training and persistence, prediction, embeddings, head weights, XGBoost Tree SHAP, direct neural SHAP, and TMB cross-validation.
+The full check covers neural-network training, model persistence, prediction, embeddings, output-head weights, XGBoost Tree SHAP, neural-network SHAP, and TMB cross-validation.
 
 ## One cancer example
 
