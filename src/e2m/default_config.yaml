@@ -1,0 +1,73 @@
+data:
+  data_dir: "./e2m_data"
+  cancers: []
+  expression_dataset: "star_counts"
+  expression_transform: "auto"
+  xena_log_offset: 1.0
+  protein_coding_only: true
+  protein_coding_mutation_targets: true
+  collapse_duplicate_symbols: "mean"
+  min_mutation_prevalence: 0.05
+  max_mutation_targets: 400
+  download_missing: true
+  use_cache: true
+  min_feature_overlap: 0.80
+
+xena:
+  expression_url_template: "https://gdc-hub.s3.us-east-1.amazonaws.com/download/{filename}"
+  expression_files:
+    star_counts: "TCGA-{cancer}.star_counts.tsv.gz"
+    star_tpm: "TCGA-{cancer}.star_tpm.tsv.gz"
+    star_fpkm: "TCGA-{cancer}.star_fpkm.tsv.gz"
+    star_fpkm_uq: "TCGA-{cancer}.star_fpkm-uq.tsv.gz"
+  mutation_file: "{cancer}_mc3_gene_level.txt.gz"
+  mutation_url_template: "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2F{cancer}_mc3_gene_level.txt.gz"
+  mutation_event_file: "{cancer}_mc3.txt.gz"
+  mutation_event_url_template: "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3%2F{cancer}_mc3.txt.gz"
+  gencode_file: "gencode.v36.annotation.gtf.gz"
+  gencode_url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_36/gencode.v36.annotation.gtf.gz"
+
+tmb:
+  coding_variant_classes:
+    - Missense_Mutation
+    - Frame_Shift_Del
+    - Frame_Shift_Ins
+    - Nonsense_Mutation
+    - Nonstop_Mutation
+    - In_Frame_Del
+    - In_Frame_Ins
+    - Translation_Start_Site
+    - Splice_Site
+
+preprocessing:
+  random_state: 42
+  standardize_inputs: true
+
+model:
+  multitask_nn:
+    hidden_layers: [512, 256]
+    dropout_rate: 0.3
+    learning_rate: 0.0005
+    weight_decay: 0.0003
+    batch_size: 64
+    epochs: 100
+    patience: 6
+    validation_split: 0.15
+    gradient_clip: 1.0
+    use_pos_weight: true
+  xgboost:
+    n_estimators: 300
+    learning_rate: 0.1
+    random_state: 42
+    n_jobs: -1
+
+evaluation:
+  cv_folds: 5
+
+interpretation:
+  method: "xgboost"
+  neural_explainer: "gradient"
+  top_features: 20
+  max_samples: 500
+  background_samples: 100
+  selection_normalized_auprc: 0.05

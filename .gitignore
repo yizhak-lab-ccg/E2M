@@ -1,0 +1,18 @@
+# Data and model artifacts
+e2m_data/
+models/
+results/
+*.pt
+*.csv
+*.csv.gz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+.ipynb_checkpoints/

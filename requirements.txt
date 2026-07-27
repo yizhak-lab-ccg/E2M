@@ -1,0 +1,12 @@
+joblib>=1.3
+numpy>=1.24
+pandas>=2.0
+pyyaml>=6.0
+requests>=2.31
+scipy>=1.11
+scikit-learn>=1.3
+torch>=2.1
+
+# For SHAP interpretation, install the optional dependencies with:
+# pip install -e ".[interpretation]"
+# TMB prediction requires: pip install -e ".[tmb]"
