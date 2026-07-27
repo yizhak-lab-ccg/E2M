@@ -18,6 +18,12 @@ def _data_arguments(parser, require_cancer=True, include_mutation_targets=True, 
     )
     parser.add_argument("--expression-dataset", choices=EXPRESSION_DATASETS)
     parser.add_argument("--transform", choices=EXPRESSION_TRANSFORMS)
+    parser.add_argument(
+        "--protein-coding",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Restrict expression features and mutation targets to protein-coding genes (default: yes).",
+    )
     if include_mutation_targets:
         parser.add_argument("--min-prevalence", type=float)
         parser.add_argument("--max-targets", type=int)
@@ -94,6 +100,9 @@ def _data_overrides(args) -> dict:
         values["min_mutation_prevalence"] = args.min_prevalence
     if getattr(args, "max_targets", None) is not None:
         values["max_mutation_targets"] = args.max_targets
+    if getattr(args, "protein_coding", None) is not None:
+        values["protein_coding_only"] = args.protein_coding
+        values["protein_coding_mutation_targets"] = args.protein_coding
     return values
 
 
