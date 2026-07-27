@@ -115,6 +115,43 @@ e2m head-weights --model-dir models/luad \
 
 See [TUTORIAL.md](TUTORIAL.md) for the complete explanation of each step and output. A clean notebook version is available at [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb).
 
+## Python API
+
+For scripting, the package exposes two objects. A `Dataset` holds the aligned
+expression, mutation labels, TMB, and cancer labels; you subset it and pass it to a
+model. An `E2MModel` (multitask mutation network) and a `TmbModel` (tree regressor) are
+fitted on a dataset and predict on any dataset or samples-by-genes matrix. Methods return
+plain pandas objects.
+
+```python
+from e2m import Dataset, E2MModel, TmbModel
+
+# Download, preprocess, and align a cohort (expression, mutations, TMB, cancer).
+data = Dataset.from_tcga(["LUAD"], data_dir="./e2m_data")
+data                                  # Dataset(samples=..., genes=..., targets=..., tmb=True, ...)
+
+# Hold out samples explicitly and fit on the rest.
+train = data.subset(samples=data.samples[:400])
+test = data.subset(samples=data.samples[400:])
+
+model = E2MModel().fit(train)         # or E2MModel(epochs=50, hidden_layers=[512, 256])
+probabilities = model.predict(test)   # samples x targets DataFrame
+metrics = model.cross_validate(data)  # per-target AUPRC, normalized-AUPRC, ROC-AUC, ...
+embeddings = model.embed(data)
+model.save("models/luad")             # E2MModel.load("models/luad") to reuse
+
+# Predict on any expression matrix (a subset, or an external cohort); genes align by symbol.
+model.predict(test.expression)
+
+# TMB regression with a pluggable tree backend.
+tmb = TmbModel(backend="lightgbm").fit(data)          # xgboost (default), lightgbm, random_forest, gradient_boosting
+tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spearman/Pearson/MAE/RMSE
+```
+
+`examples/external_transfer.py` shows end-to-end cross-cohort prediction: it trains on
+TCGA-LUAD and predicts on the GSE31210 external cohort. The stateless functional API
+(`e2m.cross_validate`, `e2m.train`, ...) used by the CLI is also importable.
+
 ## Xena expression choices
 
 `e2m` downloads cohort-level files from the UCSC Xena GDC hub.
@@ -183,16 +220,19 @@ Prediction requires at least 80 percent feature overlap by default. Missing trai
 
 ```text
 src/e2m/
+  dataset.py        # Dataset object (aligned expression / mutations / TMB)
+  model.py          # E2MModel and TmbModel objects
+  backends.py       # tree-model backends for TMB (xgboost/lightgbm/sklearn)
+  workflow.py       # stateless functional API used by the CLI
   cli.py
   config.py
   data.py
   interpretation.py
   metrics.py
-  models.py
+  models.py         # low-level multitask network
   splits.py
   tmb.py
   training.py
-  workflow.py
   default_config.yaml
 examples/
 tests/
