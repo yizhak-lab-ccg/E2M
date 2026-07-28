@@ -190,10 +190,10 @@ model.save("models/luad")                                  # reload with E2MMode
 TmbModel(backend="lightgbm").cross_validate(data)          # xgboost/lightgbm/random_forest/gradient_boosting
 ```
 
-[examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) runs this whole tutorial as a
-notebook and switches between the disk flow and this object flow with a single
-`USE_OBJECT_API` toggle. [examples/external_transfer.ipynb](examples/external_transfer.ipynb)
-predicts on an external (GEO) cohort with a TCGA-trained model.
+[examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) is an object-first, runnable
+version of this tutorial (with these command-line steps as an appendix).
+[examples/external_transfer.ipynb](examples/external_transfer.ipynb) predicts on an external
+(GEO) cohort with a TCGA-trained model.
 
 ## Changing parameters
 
