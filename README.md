@@ -1,4 +1,4 @@
-# e2m
+# E2M
 
 `e2m` predicts somatic mutation status and tumor mutational burden from RNA expression.
 
