@@ -47,7 +47,12 @@ def _model_arguments(parser):
     parser.add_argument("--weight-decay", type=float)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--epochs", type=int)
-    parser.add_argument("--patience", type=int)
+    parser.add_argument(
+        "--patience",
+        type=int,
+        help="Early-stopping patience for the internal validation split used in `cv`. "
+        "Full-cohort `train` runs the fixed epoch count and does not early-stop.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

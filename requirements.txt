@@ -6,7 +6,9 @@ requests>=2.31
 scipy>=1.11
 scikit-learn>=1.3
 torch>=2.1
+xgboost>=1.7
 
-# For SHAP interpretation, install the optional dependencies with:
-# pip install -e ".[interpretation]"
-# TMB prediction requires: pip install -e ".[tmb]"
+# pyproject.toml is authoritative; this file mirrors the core runtime dependencies.
+# XGBoost is a core dependency, so `e2m tmb` and XGBoost SHAP work after a plain install.
+# For the SHAP library (used by lightgbm/random_forest/gradient_boosting/neural SHAP),
+# install the optional extra:  pip install -e ".[interpretation]"

@@ -86,4 +86,3 @@ interpretation:
   top_features: 20
   max_samples: 500
   background_samples: 100
-  selection_normalized_auprc: 0.05

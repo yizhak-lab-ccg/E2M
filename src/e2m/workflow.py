@@ -106,7 +106,7 @@ def predict(model_dir, expression_path, output_path, min_feature_overlap=None) -
         expression,
         features,
         means,
-        min_feature_overlap or _bundle_overlap(metadata),
+        _bundle_overlap(metadata) if min_feature_overlap is None else min_feature_overlap,
     )
     _, probabilities = model.predict(aligned.values)
     output = pd.DataFrame(probabilities, index=aligned.index, columns=targets)
@@ -121,7 +121,7 @@ def embed(model_dir, expression_path, output_path, min_feature_overlap=None) -> 
         expression,
         features,
         means,
-        min_feature_overlap or _bundle_overlap(metadata),
+        _bundle_overlap(metadata) if min_feature_overlap is None else min_feature_overlap,
     )
     values = model.embeddings(aligned.values)
     output = pd.DataFrame(values, index=aligned.index, columns=[f"embedding_{i}" for i in range(values.shape[1])])

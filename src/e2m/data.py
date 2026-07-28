@@ -265,6 +265,14 @@ class XenaTCGALoader:
             "collapse": self.data_cfg.get("collapse_duplicate_symbols"),
             "prevalence": self.data_cfg.get("min_mutation_prevalence"),
             "target_cap": self.data_cfg.get("max_mutation_targets"),
+            # Source provenance: changing any download URL/filename or the annotation
+            # must invalidate the cache rather than silently reuse stale prepared data.
+            "gencode": self.xena_cfg.get("gencode_file"),
+            "gencode_url": self.xena_cfg.get("gencode_url"),
+            "expression_files": self.xena_cfg.get("expression_files"),
+            "expression_url": self.xena_cfg.get("expression_url_template"),
+            "mutation_file": self.xena_cfg.get("mutation_file"),
+            "mutation_url": self.xena_cfg.get("mutation_url_template"),
         }
         digest = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         return self.data_dir / "cache" / f"prepared_{digest}.joblib"

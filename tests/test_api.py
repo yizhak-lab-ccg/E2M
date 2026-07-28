@@ -83,6 +83,15 @@ def test_model_explain_runs_on_in_memory_data(tmp_path):
     assert (tmp_path / "shap" / "feature_summary.csv").exists()
 
 
+def test_cross_validate_accepts_explicit_mutation_labels():
+    expression, mutations = _synthetic()
+    data = Dataset(expression=expression, mutations=mutations)
+    # Passing mutations= explicitly (a DataFrame) must not raise "truth value is ambiguous".
+    metrics = _fast(E2MModel()).cross_validate(data, mutations=mutations)
+    assert isinstance(metrics, pd.DataFrame)
+    assert list(metrics.index) == ["TP53", "KRAS", "EGFR"]
+
+
 def test_model_save_load_roundtrip(tmp_path):
     expression, mutations = _synthetic()
     data = Dataset(expression=expression, mutations=mutations)
@@ -124,3 +133,11 @@ def test_tmb_default_ml_model_is_xgboost():
     assert model.ml_model == "xgboost"
     model.fit(data)
     assert model.predict(data).shape[0] == len(data.expression)
+
+
+def test_tmb_predict_enforces_feature_overlap():
+    data = _dataset_with_tmb()
+    model = TmbModel(ml_model="random_forest", n_estimators=5, random_state=0).fit(data)
+    disjoint = data.expression.rename(columns=lambda name: name + "_other")
+    with pytest.raises(ValueError, match="feature overlap"):
+        model.predict(disjoint)

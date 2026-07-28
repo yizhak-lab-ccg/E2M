@@ -60,6 +60,8 @@ def run_cross_validation(expression, mutations, cancer, config, model_overrides=
         "n_targets": mutations.shape[1],
         "folds": folds,
         "split_method": split_method,
+        "classification_threshold": 0.5,
+        "score_note": "Sigmoid outputs from weighted BCE are ranking scores, not calibrated probabilities.",
         "model": settings,
     }
     return metrics, prob_frame, pred_frame, fold_frame, metadata

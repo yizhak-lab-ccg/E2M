@@ -139,9 +139,11 @@ class E2MModel:
         if isinstance(data, pd.DataFrame):
             expression = data
         else:
-            expression, mutations, cancer = data.expression, (mutations or data.mutations), (
-                cancer if cancer is not None else data.cancer
-            )
+            expression = data.expression
+            if mutations is None:
+                mutations = data.mutations
+            if cancer is None:
+                cancer = data.cancer
         if mutations is None:
             raise ValueError("cross_validate needs mutation labels (a Dataset with mutations, or mutations=).")
         if cancer is None:
@@ -235,10 +237,17 @@ class TmbModel:
         self.feature_means = expression.mean(axis=0).to_numpy(dtype=np.float32)
         return self
 
-    def predict(self, data) -> pd.DataFrame:
+    def predict(self, data, min_feature_overlap=None) -> pd.DataFrame:
         if self.regressor is None:
             raise ValueError("Model is not fitted. Call fit(dataset).")
         expression = _expression(data)
+        overlap = len(set(self.features).intersection(expression.columns)) / max(len(self.features), 1)
+        threshold = self.config["data"].get("min_feature_overlap", 0.8) if min_feature_overlap is None else min_feature_overlap
+        if overlap < threshold:
+            raise ValueError(
+                f"Expression feature overlap is {overlap:.1%}; at least {threshold:.1%} is required. "
+                "Use the same expression quantity, transform, and gene symbols used for training."
+            )
         aligned = expression.reindex(columns=self.features)
         aligned = aligned.fillna(pd.Series(self.feature_means, index=self.features)).astype(np.float32)
         predicted = self.regressor.predict(aligned.values)

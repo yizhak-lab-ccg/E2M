@@ -64,6 +64,8 @@ The model has a shared encoder with 512 and 256 units and one binary output per 
 
 Five-fold cross-validation produces one held-out prediction for every sample. The main output is `metrics.csv`. It includes mutation prevalence, AUPRC, normalized AUPRC, ROC AUC, and threshold-based classification metrics.
 
+The sigmoid outputs are trained with prevalence-weighted cross-entropy, so they are ranking scores rather than calibrated probabilities. The classification metrics (accuracy, precision, recall, F1) use a fixed 0.5 threshold (recorded as `classification_threshold` in `run_metadata.json`); prefer the threshold-free rank metrics (AUPRC, normalized AUPRC, ROC AUC) for reporting, or calibrate the scores on held-out data first.
+
 Normalized AUPRC is calculated as:
 
 ```text
@@ -118,7 +120,7 @@ e2m explain --model-dir models/luad --target TP53 \
   --output results/luad/shap_xgboost_tp53
 ```
 
-This follows the manuscript interpretation step. It trains a separate XGBoost classifier for TP53 on all matched LUAD samples and applies `shap.TreeExplainer`. The XGBoost model is used only for attribution. It does not replace the multitask model used for held-out mutation performance.
+This follows the manuscript interpretation step. It trains a separate XGBoost classifier for TP53 on all matched LUAD samples and computes Tree SHAP with XGBoost's native `pred_contribs` (equivalent to `shap.TreeExplainer`, but robust across XGBoost versions; the other tree models use `shap.TreeExplainer`). The XGBoost model is used only for attribution. It does not replace the multitask model used for held-out mutation performance. Note this attribution is in-sample — it fits and explains the same cohort — so treat the rankings as descriptive, not a held-out result.
 
 The attribution model is pluggable: `--method` also accepts `lightgbm`, `random_forest`, and `gradient_boosting`, each explained with Tree SHAP. `xgboost` is the manuscript default.
 

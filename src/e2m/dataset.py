@@ -21,7 +21,7 @@ class Dataset:
     ``expression`` is samples-by-genes, ``mutations`` is samples-by-targets (0/1),
     ``tmb`` is a samples-by-{TMB, TMB_log2} table, and ``cancer`` labels each sample;
     all are aligned to ``expression.index``. Use :meth:`subset` to slice samples or
-    targets, then pass the dataset to a model (e.g. ``MutationModel().fit(data)``).
+    targets, then pass the dataset to a model (e.g. ``E2MModel().fit(data)``).
     """
 
     def __init__(self, expression: pd.DataFrame, mutations=None, tmb=None, cancer=None):

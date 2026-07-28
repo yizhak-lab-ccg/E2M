@@ -2,8 +2,8 @@
 
 Two ways to use the package:
 
-* Objects — a :class:`Dataset` holds aligned expression / mutations / TMB, and a
-  :class:`MutationModel` is fitted on a dataset and predicts on any dataset or
+* Objects — a :class:`Dataset` holds aligned expression / mutations / TMB, and an
+  :class:`E2MModel` is fitted on a dataset and predicts on any dataset or
   expression matrix. Methods return plain pandas objects::
 
       from e2m import Dataset, E2MModel
