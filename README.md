@@ -13,7 +13,7 @@ Python 3.10 or newer is required. Clone the repository and create an isolated en
 ### Conda
 
 ```bash
-git clone https://github.com/asafpinhasitechnion/E2M.git
+git clone https://github.com/yizhak-lab-ccg/E2M.git
 cd E2M
 
 conda create -n e2m python=3.10
@@ -32,7 +32,7 @@ The `interpretation` extra adds SHAP. XGBoost is a core dependency, so both TMB 
 ### venv
 
 ```bash
-git clone https://github.com/asafpinhasitechnion/E2M.git
+git clone https://github.com/yizhak-lab-ccg/E2M.git
 cd E2M
 
 python -m venv .venv
@@ -45,7 +45,7 @@ For SHAP interpretation, install `pip install -e ".[interpretation]"`.
 ### Conda environment file
 
 ```bash
-git clone https://github.com/asafpinhasitechnion/E2M.git
+git clone https://github.com/yizhak-lab-ccg/E2M.git
 cd E2M
 
 conda env create -f environment.yml
