@@ -64,6 +64,11 @@ class E2MModel:
             "n_targets": mutations.shape[1],
             "model": settings,
         }
+        # Record the training cohorts so a saved bundle is self-describing (the CLI's
+        # explain re-loads them). Available whenever fit gets a Dataset with cancer labels.
+        cancer = getattr(data, "cancer", None)
+        if cancer is not None:
+            self.metadata["cancers"] = sorted(pd.Series(cancer).dropna().unique().tolist())
         return self
 
     # -------------------------------------------------------------- predict

@@ -151,11 +151,18 @@ def explain(
     model, features, targets, means, metadata = _load_bundle(model_dir)
     if target not in targets:
         raise ValueError(f"Target {target!r} is not in this model. Available targets are stored in targets.json.")
-    config = metadata["training_config"]
+    config = metadata.get("training_config") or resolve_config()
     if config_path:
         config = deep_update(config, load_config(config_path))
+    cancers = metadata.get("cancers")
+    if not cancers:
+        raise ValueError(
+            "This model bundle does not record its training cohorts, so SHAP cannot re-load the "
+            "expression data. Train it with cancer-labelled data (Dataset.from_tcga or the CLI "
+            "`e2m train`), or pass a config that supplies data.cancers."
+        )
     loader = XenaTCGALoader(config, data_dir=data_dir or metadata.get("data_dir"), use_cache=use_cache)
-    data = loader.prepare(metadata["cancers"])
+    data = loader.prepare(cancers)
     expression, _ = align_expression(data.expression, features, means, min_overlap=1.0)
     labels = data.mutations[target].reindex(expression.index)
     return explain_single_target(
