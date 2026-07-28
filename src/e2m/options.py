@@ -5,7 +5,7 @@ or pick a TMB backend::
 
     import e2m
     e2m.options()                            # the whole reference as a dict
-    e2m.options()["expression_transform"]    # {"auto": ..., "log1p": ..., ...}
+    e2m.options()["expression_transform"]    # {"log1p": ..., "raw": ..., "xena": ...}
     e2m.options()["cancers"]                 # ["ACC", "BLCA", ...]
     print(e2m.format_options())              # a printable summary
 """
@@ -31,10 +31,9 @@ _EXPRESSION_DATASET_HELP = {
     "star_fpkm_uq": "STAR upper-quartile FPKM",
 }
 _EXPRESSION_TRANSFORM_HELP = {
-    "auto": "log1p for STAR counts, else keep Xena log2 (default)",
-    "log1p": "invert the Xena log2, then natural log1p",
-    "raw": "invert the Xena log2 to linear counts, no log",
-    "xena": "keep the downloaded Xena log2 values unchanged",
+    "log1p": "invert Xena's log2 to counts, then natural log1p (default)",
+    "raw": "invert Xena's log2 to linear counts, no log",
+    "xena": "keep the downloaded Xena log2 unchanged (no inversion, no offset)",
 }
 _TMB_BACKEND_HELP = {
     "xgboost": "gradient-boosted trees (default)",

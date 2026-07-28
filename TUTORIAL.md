@@ -42,7 +42,7 @@ This step downloads:
 - The LUAD MC3 nonsilent gene-level matrix from the Xena TCGA hub.
 - GENCODE v36 gene annotation.
 
-The loader converts the Xena log2 count values back to counts, applies a natural log (`log1p`) by default, keeps protein-coding genes, maps Ensembl identifiers to symbols, and averages duplicated symbols. To model linear counts instead, pass `--transform raw` to skip the log step. Expression and mutation tables are matched by TCGA sample identifier. Mutation targets must be present in at least 5 percent of the matched samples, and only the 400 most frequent targets are kept.
+The loader converts the Xena log2 values back to the underlying quantity, applies a natural log (`log1p`) by default, keeps protein-coding genes, maps Ensembl identifiers to symbols, and averages duplicated symbols. To model linear values instead, pass `--transform raw` to skip the log step; to keep Xena's log2 untouched (no inversion), pass `--transform xena`. The inversion assumes `log2(value + 1)`; if a TPM or FPKM dataset uses a different offset, set it with `--log-offset` (or use `--transform xena`). Expression and mutation tables are matched by TCGA sample identifier. Mutation targets must be present in at least 5 percent of the matched samples, and only the 400 most frequent targets are kept.
 
 The exported files are:
 

@@ -2,7 +2,7 @@ data:
   data_dir: "./e2m_data"
   cancers: []
   expression_dataset: "star_counts"
-  expression_transform: "auto"
+  expression_transform: "log1p"
   xena_log_offset: 1.0
   protein_coding_only: true
   protein_coding_mutation_targets: true

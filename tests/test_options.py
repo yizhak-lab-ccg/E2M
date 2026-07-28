@@ -19,7 +19,7 @@ def test_options_lists_the_main_choices():
         "shap_method",
         "cancers",
     }
-    assert tuple(reference["expression_transform"]) == ("auto", "raw", "log1p", "xena")
+    assert tuple(reference["expression_transform"]) == ("log1p", "raw", "xena")
     assert tuple(reference["tmb_backend"]) == TREE_BACKENDS
     assert tuple(reference["shap_method"]) == (*TREE_BACKENDS, "neural")
     assert "LUAD" in reference["cancers"]

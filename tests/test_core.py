@@ -18,7 +18,7 @@ from e2m.workflow import align_expression
 def test_default_config_is_packaged_and_named_clearly():
     config = load_config()
     assert config["data"]["expression_dataset"] == "star_counts"
-    assert config["data"]["expression_transform"] == "auto"
+    assert config["data"]["expression_transform"] == "log1p"
     assert "source" not in config["data"]
 
 
@@ -39,10 +39,16 @@ def test_alignment_uses_training_means_and_checks_overlap():
 def test_xena_transforms_are_explicit(tmp_path):
     downloaded = pd.DataFrame([[0.0, 2.0]])  # Xena log2(count + 1) -> counts [0, 3]
 
-    # Default (auto) for STAR counts recovers counts and log-transforms them.
+    # The default (log1p) recovers the underlying quantity and log-transforms it.
     default_loader = XenaTCGALoader(load_config(), data_dir=tmp_path)
     defaulted = default_loader._transform_expression(downloaded)
     assert defaulted.iloc[0].tolist() == pytest.approx(np.log1p([0.0, 3.0]).tolist())
+
+    # A custom offset changes the inversion (log2(x + 0.5) here).
+    offset_config = load_config()
+    offset_config["data"]["xena_log_offset"] = 0.5
+    offset = XenaTCGALoader(offset_config, data_dir=tmp_path)._transform_expression(downloaded)
+    assert offset.iloc[0].tolist() == pytest.approx(np.log1p([0.5, 3.5]).tolist())
 
     # raw opts out of the log transform and returns linear counts.
     raw_config = load_config()

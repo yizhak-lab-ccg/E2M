@@ -137,6 +137,7 @@ class E2MModel:
 
     @classmethod
     def load(cls, model_dir) -> "E2MModel":
+        """Load a model bundle previously written by :meth:`save` (or the CLI ``train``)."""
         directory = Path(model_dir)
         metadata = json.loads((directory / "model_metadata.json").read_text(encoding="utf-8"))
         model = cls(config=metadata.get("training_config"))

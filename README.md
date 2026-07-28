@@ -159,7 +159,7 @@ methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equi
 
 ```python
 import e2m
-e2m.options()["expression_transform"]     # {"auto": ..., "log1p": ..., "raw": ..., "xena": ...}
+e2m.options()["expression_transform"]     # {"log1p": ..., "raw": ..., "xena": ...}
 e2m.set_verbose()                          # print download / cross-validation / training progress
 ```
 
@@ -174,16 +174,15 @@ e2m.set_verbose()                          # print download / cross-validation /
 | `star_fpkm` | `TCGA-{cancer}.star_fpkm.tsv.gz` | STAR FPKM. |
 | `star_fpkm_uq` | `TCGA-{cancer}.star_fpkm-uq.tsv.gz` | STAR upper-quartile FPKM. |
 
-Xena RNA expression values are downloaded on a log2 scale. `e2m` treats the underlying quantity as counts (or TPM/FPKM) and log-transforms it by default. Choose one transform:
+Xena RNA expression values are downloaded on a log2 scale: `log2(value + offset)`. `e2m` treats the underlying quantity as counts (or TPM/FPKM) and log-transforms it by default. Choose one transform:
 
 | Option | Action |
 |---|---|
-| `auto` | Use `log1p` for STAR counts and `xena` for TPM or FPKM. This is the package default. |
-| `log1p` | Recover counts by inverting `log2(value + offset)`, then apply natural `log1p`. Default for STAR counts. |
-| `raw` | Recover counts by inverting `log2(value + offset)`, with no log transform. Use this to opt out of the log transform. The default offset is 1. |
-| `xena` | Keep the downloaded Xena values unchanged (already log2). A sensible choice for TPM or FPKM data. |
+| `log1p` | Recover the underlying quantity by inverting `log2(value + offset)`, then apply natural `log1p`. This is the package default, applied uniformly to every dataset. |
+| `raw` | Recover the underlying quantity by inverting `log2(value + offset)`, with no log transform (linear scale). Use it to opt out of logging. |
+| `xena` | Keep the downloaded Xena values unchanged (already log2). No inversion, so it needs no offset. |
 
-The offset is configurable as `data.xena_log_offset` in `default_config.yaml`. Check the Xena dataset metadata before changing expression datasets because Xena datasets can use different small offsets.
+The `offset` defaults to 1, matching STAR counts (`log2(count + 1)`). It is configurable via `--log-offset` on the CLI, or `data.xena_log_offset` (equivalently `data_overrides={"xena_log_offset": ...}`). Xena TPM/FPKM datasets may use a different small offset — check the dataset metadata and set `--log-offset` accordingly, or use `xena` to skip the inversion entirely. For the z-scored neural network, `log1p` and `xena` differ only by a constant and give the same model; for the tree models any monotonic transform is equivalent — so the offset only matters for `raw` (linear) inputs and for exported values.
 
 By default, the loader retains GENCODE v36 protein-coding genes, maps Ensembl identifiers to gene symbols, and averages duplicate symbols. Mutation labels come from the Xena MC3 nonsilent gene-level matrices. Targets must occur in at least 5 percent of matched samples, and at most the 400 most frequent targets are retained.
 

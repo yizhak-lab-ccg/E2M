@@ -18,7 +18,7 @@ from .logging_utils import logger
 
 
 EXPRESSION_DATASETS = ("star_counts", "star_tpm", "star_fpkm", "star_fpkm_uq")
-EXPRESSION_TRANSFORMS = ("auto", "raw", "log1p", "xena")
+EXPRESSION_TRANSFORMS = ("log1p", "raw", "xena")
 
 
 @dataclass
@@ -166,17 +166,17 @@ class XenaTCGALoader:
         return matrix.astype(np.float32)
 
     def _resolved_transform(self) -> str:
-        transform = self.data_cfg.get("expression_transform", "auto")
+        transform = self.data_cfg.get("expression_transform", "log1p")
         if transform not in EXPRESSION_TRANSFORMS:
             raise ValueError(f"expression_transform must be one of: {', '.join(EXPRESSION_TRANSFORMS)}")
-        if transform == "auto":
-            # STAR counts arrive from Xena as log2(count + 1); by default recover the
-            # counts and log1p-transform them. TPM/FPKM are already log2 on Xena, so keep
-            # them as downloaded. Use --transform raw to opt out of the log transform.
-            return "log1p" if self.data_cfg.get("expression_dataset") == "star_counts" else "xena"
         return transform
 
     def _transform_expression(self, matrix: pd.DataFrame) -> pd.DataFrame:
+        # Xena serves every STAR dataset as log2(value + offset). By default we invert that
+        # back to the underlying quantity and apply natural log1p, uniformly across counts,
+        # TPM, and FPKM. `raw` skips the log (linear scale); `xena` keeps the downloaded log2
+        # untouched (no inversion, so it needs no offset). The inversion assumes `offset`
+        # matches the dataset; it is 1 for STAR counts and configurable via xena_log_offset.
         transform = self._resolved_transform()
         if transform == "xena":
             return matrix

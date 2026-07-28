@@ -22,6 +22,12 @@ def _data_arguments(parser, require_cancer=True, include_mutation_targets=True, 
     parser.add_argument("--expression-dataset", choices=EXPRESSION_DATASETS)
     parser.add_argument("--transform", choices=EXPRESSION_TRANSFORMS)
     parser.add_argument(
+        "--log-offset",
+        type=float,
+        default=None,
+        help="Additive offset used when inverting Xena's log2 for raw/log1p (default: 1.0).",
+    )
+    parser.add_argument(
         "--protein-coding",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -114,6 +120,8 @@ def _data_overrides(args) -> dict:
         values["expression_dataset"] = args.expression_dataset
     if getattr(args, "transform", None):
         values["expression_transform"] = args.transform
+    if getattr(args, "log_offset", None) is not None:
+        values["xena_log_offset"] = args.log_offset
     if getattr(args, "min_prevalence", None) is not None:
         values["min_mutation_prevalence"] = args.min_prevalence
     if getattr(args, "max_targets", None) is not None:
