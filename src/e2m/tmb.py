@@ -45,16 +45,16 @@ def metric_summary(y_true, y_pred, min_n: int = 3) -> dict:
     return result
 
 
-def tmb_backend_params(config: dict, backend: str | None = None):
-    """Resolve the TMB regression backend and its parameters from a config."""
-    backend = backend or config["model"].get("tmb_backend", "xgboost")
-    section = "xgboost" if backend == "xgboost" else backend
-    return backend, dict(config["model"].get(section, {}))
+def tmb_ml_model_params(config: dict, ml_model: str | None = None):
+    """Resolve the TMB regression ML model and its parameters from a config."""
+    ml_model = ml_model or config["model"].get("tmb_ml_model", "xgboost")
+    section = "xgboost" if ml_model == "xgboost" else ml_model
+    return ml_model, dict(config["model"].get(section, {}))
 
 
-def run_tmb_cv(expression, tmb, cancer, config, backend=None, params=None):
+def run_tmb_cv(expression, tmb, cancer, config, ml_model=None, params=None):
     """Core out-of-fold TMB regression. Returns (summary, predictions, fold_metrics, metadata)."""
-    resolved_backend, resolved_params = tmb_backend_params(config, backend)
+    resolved_ml_model, resolved_params = tmb_ml_model_params(config, ml_model)
     if params is not None:
         resolved_params = dict(params)
     folds = int(config["evaluation"].get("cv_folds", 5))
@@ -66,11 +66,11 @@ def run_tmb_cv(expression, tmb, cancer, config, backend=None, params=None):
     fold_rows = []
     logger.info(
         "TMB cross-validation (%s): %d folds, %d samples",
-        resolved_backend, folds, len(expression),
+        resolved_ml_model, folds, len(expression),
     )
     for fold, (train_index, test_index) in enumerate(split_iterator, start=1):
         logger.info("  fold %d/%d: train %d, evaluate %d", fold, folds, len(train_index), len(test_index))
-        model = make_regressor(resolved_backend, resolved_params)
+        model = make_regressor(resolved_ml_model, resolved_params)
         model.fit(expression.iloc[train_index], truth[train_index])
         prediction = model.predict(expression.iloc[test_index])
         out_of_fold[test_index] = prediction
@@ -100,7 +100,7 @@ def run_tmb_cv(expression, tmb, cancer, config, backend=None, params=None):
         "split_method": split_method,
         "target": "log2(coding TMB + 1)",
         "samples_without_coding_mutation_events": "dropped",
-        "model": {"backend": resolved_backend, **resolved_params},
+        "model": {"ml_model": resolved_ml_model, **resolved_params},
     }
     return summary, predictions, fold_metrics, metadata
 

@@ -1,7 +1,7 @@
 """Discover the values the main options accept (:func:`options`).
 
 A small reference so you do not have to read the config to build ``data_overrides``
-or pick a TMB backend::
+or pick a TMB model::
 
     import e2m
     e2m.options()                            # the whole reference as a dict
@@ -12,7 +12,7 @@ or pick a TMB backend::
 
 from __future__ import annotations
 
-from .backends import TREE_BACKENDS
+from .backends import TREE_MODELS
 from .data import EXPRESSION_DATASETS, EXPRESSION_TRANSFORMS
 
 # The 33 TCGA cohort codes hosted on the UCSC Xena GDC hub. Any code Xena serves
@@ -35,7 +35,7 @@ _EXPRESSION_TRANSFORM_HELP = {
     "raw": "invert Xena's log2 to linear counts, no log",
     "xena": "keep the downloaded Xena log2 unchanged (no inversion, no offset)",
 }
-_TMB_BACKEND_HELP = {
+_TMB_ML_MODEL_HELP = {
     "xgboost": "gradient-boosted trees (default)",
     "lightgbm": "LightGBM gradient boosting (needs the lightgbm extra)",
     "random_forest": "scikit-learn RandomForestRegressor",
@@ -53,15 +53,15 @@ _SHAP_METHOD_HELP = {
 def options() -> dict:
     """Return the accepted values for the main data and model options.
 
-    The keys mirror the ``data_overrides`` fields and the ``TmbModel`` backend; each
+    The keys mirror the ``data_overrides`` fields and the ``TmbModel`` ml_model; each
     value maps an accepted option to a one-line description, except ``cancers`` which
     is the reference list of TCGA cohort codes.
     """
     return {
         "expression_dataset": {name: _EXPRESSION_DATASET_HELP.get(name, "") for name in EXPRESSION_DATASETS},
         "expression_transform": {name: _EXPRESSION_TRANSFORM_HELP.get(name, "") for name in EXPRESSION_TRANSFORMS},
-        "tmb_backend": {name: _TMB_BACKEND_HELP.get(name, "") for name in TREE_BACKENDS},
-        "shap_method": {name: _SHAP_METHOD_HELP.get(name, "") for name in (*TREE_BACKENDS, "neural")},
+        "tmb_ml_model": {name: _TMB_ML_MODEL_HELP.get(name, "") for name in TREE_MODELS},
+        "shap_method": {name: _SHAP_METHOD_HELP.get(name, "") for name in (*TREE_MODELS, "neural")},
         "cancers": list(TCGA_CANCERS),
     }
 
@@ -70,7 +70,7 @@ def format_options() -> str:
     """A printable, human-readable summary of :func:`options`."""
     reference = options()
     lines: list[str] = []
-    for key in ("expression_dataset", "expression_transform", "tmb_backend", "shap_method"):
+    for key in ("expression_dataset", "expression_transform", "tmb_ml_model", "shap_method"):
         lines.append(f"{key}:")
         for value, description in reference[key].items():
             lines.append(f"  {value:<16} {description}")

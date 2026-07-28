@@ -4,7 +4,7 @@ import argparse
 import json
 
 from . import workflow
-from .backends import TREE_BACKENDS
+from .backends import TREE_MODELS
 from .data import EXPRESSION_DATASETS, EXPRESSION_TRANSFORMS
 from .logging_utils import set_verbose
 from .options import format_options
@@ -93,9 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
     explain.add_argument("--target", required=True)
     explain.add_argument(
         "--method",
-        choices=[*TREE_BACKENDS, "neural"],
+        choices=[*TREE_MODELS, "neural"],
         default="xgboost",
-        help="Attribution model: a tree backend for Tree SHAP (default xgboost), or neural.",
+        help="Attribution model: a tree ML model for Tree SHAP (default xgboost), or neural.",
     )
     explain.add_argument("--output", required=True)
     explain.add_argument("--config")
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser(
         "options",
-        help="List accepted expression datasets, transforms, TMB backends, and TCGA cancer codes.",
+        help="List accepted expression datasets, transforms, TMB models, and TCGA cancer codes.",
     )
 
     for name, sub in commands.choices.items():

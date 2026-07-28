@@ -20,7 +20,7 @@ source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e ".[interpretation]"
 ```
 
-To see the accepted expression datasets, transforms, TMB backends, SHAP methods, and TCGA cancer codes at any time:
+To see the accepted expression datasets, transforms, TMB models, SHAP methods, and TCGA cancer codes at any time:
 
 ```bash
 e2m options
@@ -187,7 +187,7 @@ model.predict(data.subset(samples=data.samples[400:]))     # probabilities DataF
 model.cross_validate(data)                                 # metrics DataFrame
 model.save("models/luad")                                  # reload with E2MModel.load(...)
 
-TmbModel(backend="lightgbm").cross_validate(data)          # xgboost/lightgbm/random_forest/gradient_boosting
+TmbModel(ml_model="lightgbm").cross_validate(data)         # xgboost/lightgbm/random_forest/gradient_boosting
 ```
 
 [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) is an object-first, runnable

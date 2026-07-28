@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from e2m import format_options, options, set_verbose
-from e2m.backends import TREE_BACKENDS, make_classifier
+from e2m.backends import TREE_MODELS, make_classifier
 
 
 def test_options_lists_the_main_choices():
@@ -15,13 +15,13 @@ def test_options_lists_the_main_choices():
     assert set(reference) >= {
         "expression_dataset",
         "expression_transform",
-        "tmb_backend",
+        "tmb_ml_model",
         "shap_method",
         "cancers",
     }
     assert tuple(reference["expression_transform"]) == ("log1p", "raw", "xena")
-    assert tuple(reference["tmb_backend"]) == TREE_BACKENDS
-    assert tuple(reference["shap_method"]) == (*TREE_BACKENDS, "neural")
+    assert tuple(reference["tmb_ml_model"]) == TREE_MODELS
+    assert tuple(reference["shap_method"]) == (*TREE_MODELS, "neural")
     assert "LUAD" in reference["cancers"]
 
 
@@ -42,23 +42,23 @@ def test_set_verbose_adds_and_removes_one_handler():
     assert not any(getattr(h, "_e2m_stream", False) for h in log.handlers)
 
 
-@pytest.mark.parametrize("backend", ["random_forest", "gradient_boosting"])
-def test_make_classifier_sklearn_backends(backend):
+@pytest.mark.parametrize("ml_model", ["random_forest", "gradient_boosting"])
+def test_make_classifier_sklearn_models(ml_model):
     rng = np.random.default_rng(0)
     features = rng.normal(size=(30, 5))
     labels = (features[:, 0] > 0).astype(int)
-    classifier = make_classifier(backend, {"n_estimators": 10, "random_state": 0})
+    classifier = make_classifier(ml_model, {"n_estimators": 10, "random_state": 0})
     classifier.fit(features, labels)
     assert classifier.predict(features).shape == (30,)
 
 
-def test_make_classifier_rejects_unknown_backend():
+def test_make_classifier_rejects_unknown_ml_model():
     with pytest.raises(ValueError):
-        make_classifier("not_a_backend")
+        make_classifier("not_a_model")
 
 
 @pytest.mark.parametrize("method", ["xgboost", "random_forest", "gradient_boosting"])
-def test_tree_shap_supports_multiple_backends(method, tmp_path):
+def test_tree_shap_supports_multiple_ml_models(method, tmp_path):
     pytest.importorskip("shap")
     from e2m.config import resolve_config
     from e2m.interpretation import explain_single_target
@@ -77,5 +77,5 @@ def test_tree_shap_supports_multiple_backends(method, tmp_path):
     assert metadata["method"] == method
     summary = pd.read_csv(tmp_path / method / "feature_summary.csv")
     assert len(summary) == expression.shape[1]
-    # the driver feature should rank near the top for every backend
+    # the driver feature should rank near the top for every ml_model
     assert "G0" in set(summary.sort_values("mean_abs_shap", ascending=False).head(3)["feature"])

@@ -173,24 +173,24 @@ class TmbModel:
     """Predict tumor mutational burden — ``log2(TMB + 1)`` — from expression.
 
     Fit it on a :class:`Dataset` (which carries ``tmb``) or on ``expression`` + a
-    ``tmb`` table with a ``TMB_log2`` column. The tree ``backend`` is one of
+    ``tmb`` table with a ``TMB_log2`` column. The tree ``ml_model`` is one of
     ``xgboost`` (default), ``lightgbm``, ``random_forest``, or ``gradient_boosting``;
     each reads its parameter block from ``config['model']``. Samples without a TMB
     label are dropped. ``predict`` returns ``TMB_log2_pred`` and ``TMB_pred``.
     """
 
-    def __init__(self, backend: Optional[str] = None, config: Optional[dict] = None, **params):
+    def __init__(self, ml_model: Optional[str] = None, config: Optional[dict] = None, **params):
         self.config = config if config is not None else resolve_config()
-        self.backend = backend or self.config["model"].get("tmb_backend", "xgboost")
+        self.ml_model = ml_model or self.config["model"].get("tmb_ml_model", "xgboost")
         self.params = params
         self.regressor = None
         self.features: Optional[list] = None
         self.feature_means: Optional[np.ndarray] = None
 
     def _resolved_params(self) -> dict:
-        from .tmb import tmb_backend_params
+        from .tmb import tmb_ml_model_params
 
-        _, base = tmb_backend_params(self.config, self.backend)
+        _, base = tmb_ml_model_params(self.config, self.ml_model)
         base.update(self.params)
         return base
 
@@ -202,7 +202,7 @@ class TmbModel:
             raise ValueError("TmbModel.fit needs TMB labels (a Dataset with tmb, or tmb=).")
         index = labels.index[labels["TMB_log2"].notna()]
         expression = expression.loc[index]
-        self.regressor = make_regressor(self.backend, self._resolved_params())
+        self.regressor = make_regressor(self.ml_model, self._resolved_params())
         self.regressor.fit(expression.values, labels.loc[index, "TMB_log2"].to_numpy())
         self.features = expression.columns.tolist()
         self.feature_means = expression.mean(axis=0).to_numpy(dtype=np.float32)
@@ -237,7 +237,7 @@ class TmbModel:
             labels.loc[index],
             cancer.loc[index],
             self.config,
-            backend=self.backend,
+            ml_model=self.ml_model,
             params=self._resolved_params(),
         )
         if output is not None:
@@ -246,4 +246,4 @@ class TmbModel:
 
     def __repr__(self) -> str:
         state = "fitted" if self.regressor is not None else "unfitted"
-        return f"TmbModel(backend={self.backend!r}, {state})"
+        return f"TmbModel(ml_model={self.ml_model!r}, {state})"

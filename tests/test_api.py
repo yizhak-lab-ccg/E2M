@@ -89,24 +89,24 @@ def _dataset_with_tmb():
     return Dataset(expression=expression, mutations=mutations, tmb=tmb)
 
 
-@pytest.mark.parametrize("backend", ["random_forest", "gradient_boosting"])
-def test_tmb_model_backends_fit_predict_cv(backend, tmp_path):
+@pytest.mark.parametrize("ml_model", ["random_forest", "gradient_boosting"])
+def test_tmb_model_ml_models_fit_predict_cv(ml_model, tmp_path):
     data = _dataset_with_tmb()
-    model = TmbModel(backend=backend, n_estimators=5, random_state=0)
+    model = TmbModel(ml_model=ml_model, n_estimators=5, random_state=0)
     model.config["evaluation"]["cv_folds"] = 3
     model.fit(data)
     pred = model.predict(data)
     assert list(pred.columns) == ["TMB_log2_pred", "TMB_pred"]
     assert pred.shape[0] == len(data.expression)
-    summary = model.cross_validate(data, output=tmp_path / f"tmb_{backend}")
+    summary = model.cross_validate(data, output=tmp_path / f"tmb_{ml_model}")
     assert (summary["cancer"] == "__OVERALL__").any()
-    assert (tmp_path / f"tmb_{backend}" / "summary.csv").exists()
+    assert (tmp_path / f"tmb_{ml_model}" / "summary.csv").exists()
 
 
-def test_tmb_default_backend_is_xgboost():
+def test_tmb_default_ml_model_is_xgboost():
     pytest.importorskip("xgboost")
     data = _dataset_with_tmb()
     model = TmbModel(n_estimators=3, max_depth=2, n_jobs=1)
-    assert model.backend == "xgboost"
+    assert model.ml_model == "xgboost"
     model.fit(data)
     assert model.predict(data).shape[0] == len(data.expression)

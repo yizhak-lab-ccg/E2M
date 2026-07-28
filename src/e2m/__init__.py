@@ -12,14 +12,14 @@ Two ways to use the package:
       probs = model.predict(data.subset(samples=test_ids))   # DataFrame
       metrics = model.cross_validate(data)                   # DataFrame
 
-  TMB prediction uses :class:`TmbModel` (pluggable tree backend).
+  TMB prediction uses :class:`TmbModel` (pluggable tree ML model).
 
 * The stateless functional API (also what the ``e2m`` CLI calls):
   :func:`download`, :func:`cross_validate`, :func:`train`, :func:`predict_tmb`,
   :func:`predict`, :func:`embed`, :func:`head_weights`, :func:`explain`.
 
 Call :func:`set_verbose` to print progress, and :func:`options` to see the accepted
-expression datasets, transforms, TMB backends, and TCGA cancer codes.
+expression datasets, transforms, TMB models, and TCGA cancer codes.
 """
 
 from .data import PreparedData

@@ -27,10 +27,10 @@ def explain_single_target(
     else:
         explained_expression = expression
 
-    from .backends import TREE_BACKENDS
+    from .backends import TREE_MODELS
 
     method = method.lower()
-    if method in TREE_BACKENDS:
+    if method in TREE_MODELS:
         section = "xgboost" if method == "xgboost" else method
         shap_values, output_scale = _explain_tree(
             expression,
@@ -50,7 +50,7 @@ def explain_single_target(
         )
     else:
         raise ValueError(
-            "SHAP method must be one of: " + ", ".join(TREE_BACKENDS) + ", neural."
+            "SHAP method must be one of: " + ", ".join(TREE_MODELS) + ", neural."
         )
 
     shap_values = _two_dimensional(shap_values)
@@ -117,16 +117,16 @@ def _require_shap():
         raise ImportError('This SHAP method requires: pip install -e ".[interpretation]"') from exc
 
 
-def _explain_tree(expression, labels, explained_expression, backend, settings):
+def _explain_tree(expression, labels, explained_expression, ml_model, settings):
     """Train a tree classifier for one target and explain it with Tree SHAP.
 
-    ``backend`` is one of :data:`e2m.backends.TREE_BACKENDS`. Class imbalance is handled
-    per backend: ``scale_pos_weight`` for the boosting backends, ``class_weight`` for the
+    ``ml_model`` is one of :data:`e2m.backends.TREE_MODELS`. Class imbalance is handled
+    per model: ``scale_pos_weight`` for the boosting models, ``class_weight`` for the
     random forest, and balanced per-sample weights for scikit-learn gradient boosting.
 
     XGBoost is explained with its own native ``pred_contribs`` (the exact Tree SHAP that
     ``shap`` delegates to for XGBoost), which needs no ``shap`` install and is robust across
-    XGBoost serialization versions. The other backends use ``shap.TreeExplainer``.
+    XGBoost serialization versions. The other models use ``shap.TreeExplainer``.
     """
     from .backends import make_classifier
 
@@ -138,19 +138,19 @@ def _explain_tree(expression, labels, explained_expression, backend, settings):
 
     parameters = dict(settings)
     fit_kwargs: dict = {}
-    if backend in ("xgboost", "lightgbm"):
+    if ml_model in ("xgboost", "lightgbm"):
         parameters.setdefault("scale_pos_weight", negatives / max(positives, 1))
-    elif backend == "random_forest":
+    elif ml_model == "random_forest":
         parameters.setdefault("class_weight", "balanced")
     else:  # gradient_boosting has no class weighting; weight the samples instead
         weight_positive = len(y) / (2.0 * max(positives, 1))
         weight_negative = len(y) / (2.0 * max(negatives, 1))
         fit_kwargs["sample_weight"] = np.where(y == 1, weight_positive, weight_negative)
 
-    classifier = make_classifier(backend, parameters)
+    classifier = make_classifier(ml_model, parameters)
     classifier.fit(expression.values, y, **fit_kwargs)
 
-    if backend == "xgboost":
+    if ml_model == "xgboost":
         import xgboost as xgb
 
         booster = classifier.get_booster()
@@ -162,7 +162,7 @@ def _explain_tree(expression, labels, explained_expression, backend, settings):
 
     shap = _require_shap()
     explainer = shap.TreeExplainer(classifier)
-    return explainer.shap_values(explained_expression.values), f"{backend}_tree_shap"
+    return explainer.shap_values(explained_expression.values), f"{ml_model}_tree_shap"
 
 
 def _explain_neural(model, expression, explained_expression, target_index, settings, rng):
