@@ -9,6 +9,7 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from .backends import make_regressor
+from .logging_utils import logger
 from .splits import make_folds
 
 
@@ -63,7 +64,12 @@ def run_tmb_cv(expression, tmb, cancer, config, backend=None, params=None):
     out_of_fold = np.full(len(expression), np.nan)
     fold_ids = np.full(len(expression), -1, dtype=int)
     fold_rows = []
+    logger.info(
+        "TMB cross-validation (%s): %d folds, %d samples",
+        resolved_backend, folds, len(expression),
+    )
     for fold, (train_index, test_index) in enumerate(split_iterator, start=1):
+        logger.info("  fold %d/%d: train %d, evaluate %d", fold, folds, len(train_index), len(test_index))
         model = make_regressor(resolved_backend, resolved_params)
         model.fit(expression.iloc[train_index], truth[train_index])
         prediction = model.predict(expression.iloc[test_index])

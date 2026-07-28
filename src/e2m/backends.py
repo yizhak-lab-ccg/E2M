@@ -1,4 +1,9 @@
-"""Tree-model backends for TMB regression (XGBoost, LightGBM, scikit-learn)."""
+"""Tree-model backends (XGBoost, LightGBM, scikit-learn).
+
+``make_regressor`` builds the TMB regressor; ``make_classifier`` builds the tree
+classifier that Tree SHAP explains. Both share the same ``TREE_BACKENDS`` names and
+per-backend parameter blocks.
+"""
 
 from __future__ import annotations
 
@@ -30,3 +35,29 @@ def make_regressor(backend: str, params: dict | None = None):
     from sklearn.ensemble import GradientBoostingRegressor
 
     return GradientBoostingRegressor(**params)
+
+
+def make_classifier(backend: str, params: dict | None = None):
+    """Build a tree classifier for ``backend`` that ``shap.TreeExplainer`` can explain."""
+    if backend not in TREE_BACKENDS:
+        raise ValueError(f"backend must be one of {TREE_BACKENDS}; got {backend!r}.")
+    params = dict(params or {})
+    if backend == "xgboost":
+        try:
+            import xgboost as xgb
+        except ImportError as exc:
+            raise ImportError("XGBoost is a core dependency. Reinstall with: pip install -e .") from exc
+        return xgb.XGBClassifier(**params)
+    if backend == "lightgbm":
+        try:
+            import lightgbm as lgb
+        except ImportError as exc:
+            raise ImportError('LightGBM backend requires: pip install -e ".[lightgbm]"') from exc
+        return lgb.LGBMClassifier(**params)
+    if backend == "random_forest":
+        from sklearn.ensemble import RandomForestClassifier
+
+        return RandomForestClassifier(**params)
+    from sklearn.ensemble import GradientBoostingClassifier
+
+    return GradientBoostingClassifier(**params)

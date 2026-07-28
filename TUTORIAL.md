@@ -20,6 +20,14 @@ source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e ".[interpretation]"
 ```
 
+To see the accepted expression datasets, transforms, TMB backends, SHAP methods, and TCGA cancer codes at any time:
+
+```bash
+e2m options
+```
+
+Every command runs quietly by default. Add `--verbose` to any command to print step-by-step progress (downloads, cross-validation folds, training) to stderr.
+
 ## 2. Download and prepare LUAD
 
 ```bash
@@ -112,6 +120,8 @@ e2m explain --model-dir models/luad --target TP53 \
 
 This follows the manuscript interpretation step. It trains a separate XGBoost classifier for TP53 on all matched LUAD samples and applies `shap.TreeExplainer`. The XGBoost model is used only for attribution. It does not replace the multitask model used for held-out mutation performance.
 
+The attribution model is pluggable: `--method` also accepts `lightgbm`, `random_forest`, and `gradient_boosting`, each explained with Tree SHAP. `xgboost` is the manuscript default.
+
 `feature_summary.csv` ranks expression genes by mean absolute SHAP. `sample_shap_top_features.csv.gz` contains per-sample SHAP values and expression values for the top 20 features.
 
 SHAP identifies features used by the model. Features can reflect downstream mutation effects, tumor subtype, co-mutation, immune or stromal composition, or other correlated biology. SHAP alone does not establish causality.
@@ -180,9 +190,10 @@ model.save("models/luad")                                  # reload with E2MMode
 TmbModel(backend="lightgbm").cross_validate(data)          # xgboost/lightgbm/random_forest/gradient_boosting
 ```
 
-See section 8 of [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) for a runnable
-version, and [examples/external_transfer.py](examples/external_transfer.py) for predicting on an
-external (GEO) cohort with a TCGA-trained model.
+[examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) runs this whole tutorial as a
+notebook and switches between the disk flow and this object flow with a single
+`USE_OBJECT_API` toggle. [examples/external_transfer.ipynb](examples/external_transfer.ipynb)
+predicts on an external (GEO) cohort with a TCGA-trained model.
 
 ## Changing parameters
 

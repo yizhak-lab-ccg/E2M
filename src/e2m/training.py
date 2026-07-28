@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .logging_utils import logger
 from .metrics import evaluate_predictions
 from .models import MultitaskModel
 from .splits import make_folds
@@ -36,7 +37,12 @@ def run_cross_validation(expression, mutations, cancer, config, model_overrides=
     predictions = np.zeros(mutations.shape, dtype=np.int8)
     fold_number = np.zeros(len(expression), dtype=np.int16)
     settings = model_settings(config, model_overrides)
+    logger.info(
+        "Mutation cross-validation: %d folds, %d samples, %d targets",
+        folds, len(expression), mutations.shape[1],
+    )
     for fold, (train_index, test_index) in enumerate(splits, start=1):
+        logger.info("  fold %d/%d: train %d, evaluate %d", fold, folds, len(train_index), len(test_index))
         model = MultitaskModel(expression.shape[1], mutations.shape[1], **settings)
         model.fit(expression.iloc[train_index].values, mutations.iloc[train_index].values)
         fold_predictions, fold_probabilities = model.predict(expression.iloc[test_index].values)
@@ -83,6 +89,10 @@ def train_full(expression, mutations, config, output_dir, metadata, model_overri
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     settings = model_settings(config, model_overrides)
+    logger.info(
+        "Training full-cohort model: %d samples, %d targets, %s epochs",
+        len(expression), mutations.shape[1], settings.get("epochs", "default"),
+    )
     model = MultitaskModel(expression.shape[1], mutations.shape[1], **settings)
     model.fit_full(expression.values, mutations.values)
     model.save(output / "model.pt")

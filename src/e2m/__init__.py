@@ -17,11 +17,16 @@ Two ways to use the package:
 * The stateless functional API (also what the ``e2m`` CLI calls):
   :func:`download`, :func:`cross_validate`, :func:`train`, :func:`predict_tmb`,
   :func:`predict`, :func:`embed`, :func:`head_weights`, :func:`explain`.
+
+Call :func:`set_verbose` to print progress, and :func:`options` to see the accepted
+expression datasets, transforms, TMB backends, and TCGA cancer codes.
 """
 
 from .data import PreparedData
 from .dataset import Dataset
+from .logging_utils import set_verbose
 from .model import E2MModel, TmbModel
+from .options import format_options, options
 from .workflow import cross_validate, download, embed, explain, head_weights, predict, predict_tmb, train
 
 __all__ = [
@@ -39,5 +44,9 @@ __all__ = [
     "embed",
     "head_weights",
     "explain",
+    # discoverability / progress
+    "options",
+    "format_options",
+    "set_verbose",
 ]
 __version__ = "0.2.0"

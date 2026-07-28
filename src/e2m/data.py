@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from .logging_utils import logger
+
 
 EXPRESSION_DATASETS = ("star_counts", "star_tpm", "star_fpkm", "star_fpkm_uq")
 EXPRESSION_TRANSFORMS = ("auto", "raw", "log1p", "xena")
@@ -60,8 +62,10 @@ class XenaTCGALoader:
         cancers = normalize_cancers(cancers or self.data_cfg.get("cancers"))
         cache_path = self._cache_path(cancers)
         if self.use_cache and cache_path.exists():
+            logger.info("Loading prepared data for %s from cache", ", ".join(cancers))
             return joblib.load(cache_path)
 
+        logger.info("Preparing %d cohort(s): %s", len(cancers), ", ".join(cancers))
         annotation = self._load_annotation()
         expression_parts: list[pd.DataFrame] = []
         mutation_parts: list[pd.DataFrame] = []
@@ -84,6 +88,10 @@ class XenaTCGALoader:
         if mutations.empty:
             raise ValueError("No mutation targets passed the prevalence threshold.")
 
+        logger.info(
+            "Prepared %d samples x %d genes, %d mutation targets",
+            len(expression), expression.shape[1], mutations.shape[1],
+        )
         prepared = PreparedData(expression=expression, mutations=mutations, cancer=cancer)
         if self.use_cache:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +100,7 @@ class XenaTCGALoader:
 
     def prepare_tmb(self, cancers: Iterable[str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
         cancers = normalize_cancers(cancers or self.data_cfg.get("cancers"))
+        logger.info("Preparing coding TMB for %d cohort(s): %s", len(cancers), ", ".join(cancers))
         annotation = self._load_annotation()
         expression_parts = []
         tmb_parts = []
@@ -120,6 +129,7 @@ class XenaTCGALoader:
         cancer = pd.concat(cancer_parts).reindex(expression.index)
         if expression.empty:
             raise ValueError("No matched expression and coding TMB samples were found.")
+        logger.info("Prepared coding TMB for %d samples", len(expression))
         return expression, tmb, cancer
 
     def _load_expression(self, cancer: str, annotation: pd.DataFrame) -> pd.DataFrame:
@@ -235,6 +245,7 @@ class XenaTCGALoader:
         if not self.data_cfg.get("download_missing", True):
             raise FileNotFoundError(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Downloading %s", relative_path.as_posix())
         partial = path.with_name(path.name + ".part")
         with requests.get(url, stream=True, timeout=120) as response:
             response.raise_for_status()

@@ -4,7 +4,10 @@ import argparse
 import json
 
 from . import workflow
+from .backends import TREE_BACKENDS
 from .data import EXPRESSION_DATASETS, EXPRESSION_TRANSFORMS
+from .logging_utils import set_verbose
+from .options import format_options
 
 
 def _data_arguments(parser, require_cancer=True, include_mutation_targets=True, include_cache=True):
@@ -82,11 +85,26 @@ def build_parser() -> argparse.ArgumentParser:
     explain = commands.add_parser("explain", help="Explain one mutation output with SHAP.")
     explain.add_argument("--model-dir", required=True)
     explain.add_argument("--target", required=True)
-    explain.add_argument("--method", choices=["xgboost", "neural"], default="xgboost")
+    explain.add_argument(
+        "--method",
+        choices=[*TREE_BACKENDS, "neural"],
+        default="xgboost",
+        help="Attribution model: a tree backend for Tree SHAP (default xgboost), or neural.",
+    )
     explain.add_argument("--output", required=True)
     explain.add_argument("--config")
     explain.add_argument("--data-dir")
     explain.add_argument("--no-cache", action="store_true")
+
+    commands.add_parser(
+        "options",
+        help="List accepted expression datasets, transforms, TMB backends, and TCGA cancer codes.",
+    )
+
+    for name, sub in commands.choices.items():
+        sub.add_argument(
+            "--verbose", "-v", action="store_true", help="Print progress messages to stderr."
+        )
     return parser
 
 
@@ -127,6 +145,11 @@ def _model_overrides(args) -> dict:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "verbose", False):
+        set_verbose(True)
+    if args.command == "options":
+        print(format_options())
+        return 0
     if args.command == "download":
         result = workflow.download(
             args.cancer, args.config, args.data_dir, _data_overrides(args), not args.no_cache, args.output

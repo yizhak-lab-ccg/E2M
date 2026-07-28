@@ -17,11 +17,6 @@ def explain_single_target(
     output_dir: str | Path,
     config: dict,
 ) -> dict:
-    try:
-        import shap
-    except ImportError as exc:
-        raise ImportError('SHAP interpretation requires: pip install -e ".[interpretation]"') from exc
-
     settings = config["interpretation"]
     random_state = int(config["preprocessing"].get("random_state", 42))
     rng = np.random.default_rng(random_state)
@@ -32,18 +27,20 @@ def explain_single_target(
     else:
         explained_expression = expression
 
+    from .backends import TREE_BACKENDS
+
     method = method.lower()
-    if method == "xgboost":
-        shap_values, output_scale = _explain_xgboost(
-            shap,
+    if method in TREE_BACKENDS:
+        section = "xgboost" if method == "xgboost" else method
+        shap_values, output_scale = _explain_tree(
             expression,
             labels,
             explained_expression,
-            config["model"]["xgboost"],
+            method,
+            config["model"].get(section, {}),
         )
     elif method == "neural":
         shap_values, output_scale = _explain_neural(
-            shap,
             model,
             expression,
             explained_expression,
@@ -52,7 +49,9 @@ def explain_single_target(
             rng,
         )
     else:
-        raise ValueError("SHAP method must be xgboost or neural.")
+        raise ValueError(
+            "SHAP method must be one of: " + ", ".join(TREE_BACKENDS) + ", neural."
+        )
 
     shap_values = _two_dimensional(shap_values)
     if shap_values.shape != explained_expression.shape:
@@ -109,24 +108,65 @@ def explain_single_target(
     return metadata
 
 
-def _explain_xgboost(shap, expression, labels, explained_expression, settings):
+def _require_shap():
     try:
-        import xgboost as xgb
+        import shap
+
+        return shap
     except ImportError as exc:
-        raise ImportError("XGBoost SHAP requires xgboost, a core dependency. Reinstall with: pip install -e .") from exc
+        raise ImportError('This SHAP method requires: pip install -e ".[interpretation]"') from exc
+
+
+def _explain_tree(expression, labels, explained_expression, backend, settings):
+    """Train a tree classifier for one target and explain it with Tree SHAP.
+
+    ``backend`` is one of :data:`e2m.backends.TREE_BACKENDS`. Class imbalance is handled
+    per backend: ``scale_pos_weight`` for the boosting backends, ``class_weight`` for the
+    random forest, and balanced per-sample weights for scikit-learn gradient boosting.
+
+    XGBoost is explained with its own native ``pred_contribs`` (the exact Tree SHAP that
+    ``shap`` delegates to for XGBoost), which needs no ``shap`` install and is robust across
+    XGBoost serialization versions. The other backends use ``shap.TreeExplainer``.
+    """
+    from .backends import make_classifier
+
     y = labels.astype(int).to_numpy()
     if len(np.unique(y)) < 2:
         raise ValueError("The selected mutation target has only one class.")
     positives = int(y.sum())
+    negatives = len(y) - positives
+
     parameters = dict(settings)
-    parameters["scale_pos_weight"] = (len(y) - positives) / positives
-    classifier = xgb.XGBClassifier(**parameters)
-    classifier.fit(expression.values, y)
+    fit_kwargs: dict = {}
+    if backend in ("xgboost", "lightgbm"):
+        parameters.setdefault("scale_pos_weight", negatives / max(positives, 1))
+    elif backend == "random_forest":
+        parameters.setdefault("class_weight", "balanced")
+    else:  # gradient_boosting has no class weighting; weight the samples instead
+        weight_positive = len(y) / (2.0 * max(positives, 1))
+        weight_negative = len(y) / (2.0 * max(negatives, 1))
+        fit_kwargs["sample_weight"] = np.where(y == 1, weight_positive, weight_negative)
+
+    classifier = make_classifier(backend, parameters)
+    classifier.fit(expression.values, y, **fit_kwargs)
+
+    if backend == "xgboost":
+        import xgboost as xgb
+
+        booster = classifier.get_booster()
+        contributions = booster.predict(
+            xgb.DMatrix(explained_expression.values), pred_contribs=True
+        )
+        # pred_contribs returns per-feature SHAP values plus a trailing bias column.
+        return contributions[:, :-1], "xgboost_raw_margin"
+
+    shap = _require_shap()
     explainer = shap.TreeExplainer(classifier)
-    return explainer.shap_values(explained_expression.values), "xgboost_raw_margin"
+    return explainer.shap_values(explained_expression.values), f"{backend}_tree_shap"
 
 
-def _explain_neural(shap, model, expression, explained_expression, target_index, settings, rng):
+def _explain_neural(model, expression, explained_expression, target_index, settings, rng):
+    shap = _require_shap()
     import torch
     import torch.nn as nn
 
@@ -159,10 +199,12 @@ def _explain_neural(shap, model, expression, explained_expression, target_index,
 
 def _two_dimensional(values) -> np.ndarray:
     if isinstance(values, list):
-        values = values[-1]
+        values = values[-1]  # per-class list (e.g. LightGBM): keep the positive class
     array = np.asarray(values)
-    if array.ndim == 3 and array.shape[-1] == 1:
-        array = array[:, :, 0]
+    if array.ndim == 3:
+        # (samples, features, outputs): a single neural output, or per-class tree
+        # contributions. Take the last column, i.e. the positive class.
+        array = array[:, :, -1]
     if array.ndim != 2:
         raise ValueError(f"Expected a two-dimensional SHAP matrix, received shape {array.shape}.")
     return array

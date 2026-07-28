@@ -148,9 +148,20 @@ tmb = TmbModel(backend="lightgbm").fit(data)          # xgboost (default), light
 tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spearman/Pearson/MAE/RMSE
 ```
 
-`examples/external_transfer.py` shows end-to-end cross-cohort prediction: it trains on
+`examples/external_transfer.ipynb` shows end-to-end cross-cohort prediction: it trains on
 TCGA-LUAD and predicts on the GSE31210 external cohort. The stateless functional API
 (`e2m.cross_validate`, `e2m.train`, ...) used by the CLI is also importable.
+
+`e2m.options()` returns the accepted expression datasets, transforms, TMB backends, SHAP
+methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equivalent is
+`e2m options`). The workflow runs quietly by default; call `e2m.set_verbose()` — or pass
+`--verbose` on the CLI — to print step-by-step progress.
+
+```python
+import e2m
+e2m.options()["expression_transform"]     # {"auto": ..., "log1p": ..., "raw": ..., "xena": ...}
+e2m.set_verbose()                          # print download / cross-validation / training progress
+```
 
 ## Xena expression choices
 
@@ -188,12 +199,15 @@ By default, the loader retains GENCODE v36 protein-coding genes, maps Ensembl id
 | `embed` | Extract the last shared encoder layer. |
 | `head-weights` | Extract one output-head vector per mutation target. |
 | `explain` | Explain one selected mutation output with SHAP. |
+| `options` | List accepted expression datasets, transforms, TMB backends, SHAP methods, and cancer codes. |
 
-Use `e2m <command> --help` for command-specific options.
+Use `e2m <command> --help` for command-specific options. Add `--verbose` to any command to print progress to stderr.
 
 ## SHAP methods
 
 `--method xgboost` follows the manuscript interpretation workflow. It trains a separate full-cohort XGBoost classifier for the selected mutation target and applies Tree SHAP. This model is for interpretation and is not used as the primary cross-validated mutation predictor.
+
+The tree attribution model is pluggable: `--method` also accepts `lightgbm`, `random_forest`, and `gradient_boosting`, each explained with `shap.TreeExplainer`. Class imbalance is handled per backend (`scale_pos_weight` for the boosting backends, balanced class or sample weights for the scikit-learn ones). `xgboost` remains the manuscript default.
 
 `--method neural` applies SHAP GradientExplainer directly to the selected probability output of the trained multitask network. It uses a sampled background from the same cohort. This method explains the neural model itself, but can be slower and more sensitive to the background sample than Tree SHAP.
 
@@ -222,7 +236,9 @@ Prediction requires at least 80 percent feature overlap by default. Missing trai
 src/e2m/
   dataset.py        # Dataset object (aligned expression / mutations / TMB)
   model.py          # E2MModel and TmbModel objects
-  backends.py       # tree-model backends for TMB (xgboost/lightgbm/sklearn)
+  backends.py       # tree-model backends (regressor for TMB, classifier for SHAP)
+  options.py        # options() / format_options(): accepted choices
+  logging_utils.py  # set_verbose(): opt-in progress logging
   workflow.py       # stateless functional API used by the CLI
   cli.py
   config.py
