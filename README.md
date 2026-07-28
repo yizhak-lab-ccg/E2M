@@ -4,7 +4,8 @@
 
 The main mutation model is a multitask neural network. A shared encoder learns a sample representation and one output predicts each retained mutation target. TMB prediction uses XGBoost regression. SHAP can explain one mutation output with either a separate XGBoost classifier, as used in the manuscript, or the trained multitask neural network directly.
 
-RNA expression can contain signals from tumor cells, stromal cells, immune cells, cancer subtype, and co-occurring mutations. A prediction or SHAP association should not automatically be interpreted as a direct effect of a mutation.
+
+<img width="2246" height="759" alt="image" src="https://github.com/user-attachments/assets/46bc627f-922a-4792-ae67-893da44edaaa" />
 
 ## Installation
 
