@@ -103,6 +103,33 @@ class E2MModel:
         columns = [f"weight_{i}" for i in range(values.shape[1])]
         return pd.DataFrame(values, index=self.targets, columns=columns)
 
+    # ----------------------------------------------------------- interpret
+    def explain(self, data, target, method="xgboost", output=None, min_feature_overlap=1.0) -> pd.DataFrame:
+        """Explain one mutation target with SHAP on in-memory ``data`` (no re-download).
+
+        ``method`` is a tree ML model (``xgboost`` default, ``lightgbm``,
+        ``random_forest``, ``gradient_boosting``) or ``neural``. Returns the per-feature
+        summary ranked by mean |SHAP|, and writes the full SHAP tables to ``output`` if
+        given. Needs mutation labels for ``target`` — pass a :class:`Dataset` with
+        mutations (unlike the functional :func:`e2m.explain`, which reloads a cohort).
+        """
+        self._check_fitted()
+        from .interpretation import run_single_target_explanation, write_explanation
+
+        if self.targets is None or target not in self.targets:
+            raise ValueError(f"Target {target!r} is not in this model's targets.")
+        _, mutations = _expression_mutations(data, None)
+        if mutations is None or target not in mutations.columns:
+            raise ValueError(f"explain needs mutation labels for {target!r} (pass a Dataset with mutations).")
+        aligned = self._align(data, min_feature_overlap)
+        labels = mutations[target].reindex(aligned.index)
+        summary, sample_values, metadata = run_single_target_explanation(
+            self.network, aligned, labels, target, self.targets.index(target), method, self.config
+        )
+        if output is not None:
+            write_explanation(output, summary, sample_values, metadata)
+        return summary
+
     # ------------------------------------------------------------ evaluate
     def cross_validate(self, data, mutations=None, cancer=None, output=None) -> pd.DataFrame:
         """Held-out cross-validation of this model's settings; returns the metrics table.

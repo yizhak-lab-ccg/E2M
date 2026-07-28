@@ -69,6 +69,20 @@ def test_cross_validate_returns_metrics_frame(tmp_path):
     assert (tmp_path / "cv" / "oof_probabilities.csv").exists()
 
 
+def test_model_explain_runs_on_in_memory_data(tmp_path):
+    pytest.importorskip("xgboost")  # xgboost Tree SHAP uses native pred_contribs, no shap needed
+    expression, mutations = _synthetic()
+    data = Dataset(expression=expression, mutations=mutations)
+    model = _fast(E2MModel()).fit(data)
+    summary = model.explain(data, target="TP53", method="xgboost", output=tmp_path / "shap")
+    assert isinstance(summary, pd.DataFrame)
+    assert {"feature", "mean_abs_shap", "rank"}.issubset(summary.columns)
+    assert len(summary) == expression.shape[1]
+    # TP53 is driven by G0/G1 in the synthetic data, so one of them should rank at the top
+    assert summary.iloc[0]["feature"] in {"G0", "G1"}
+    assert (tmp_path / "shap" / "feature_summary.csv").exists()
+
+
 def test_model_save_load_roundtrip(tmp_path):
     expression, mutations = _synthetic()
     data = Dataset(expression=expression, mutations=mutations)

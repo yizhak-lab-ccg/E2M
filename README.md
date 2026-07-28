@@ -138,6 +138,7 @@ model = E2MModel().fit(train)         # or E2MModel(epochs=50, hidden_layers=[51
 probabilities = model.predict(test)   # samples x targets DataFrame
 metrics = model.cross_validate(data)  # per-target AUPRC, normalized-AUPRC, ROC-AUC, ...
 embeddings = model.embed(data)
+shap = model.explain(data, target="TP53", method="xgboost")  # in-memory SHAP; returns a DataFrame
 model.save("models/luad")             # E2MModel.load("models/luad") to reuse
 
 # Predict on any expression matrix (a subset, or an external cohort); genes align by symbol.

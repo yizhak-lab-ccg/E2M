@@ -7,16 +7,20 @@ import numpy as np
 import pandas as pd
 
 
-def explain_single_target(
+def run_single_target_explanation(
     model,
     expression: pd.DataFrame,
     labels: pd.Series,
     target: str,
     target_index: int,
     method: str,
-    output_dir: str | Path,
     config: dict,
-) -> dict:
+):
+    """Compute SHAP for one target in memory.
+
+    Returns ``(summary, sample_values, metadata)`` and writes nothing; callers decide
+    what to keep or persist (see :func:`write_explanation`).
+    """
     settings = config["interpretation"]
     random_state = int(config["preprocessing"].get("random_state", 42))
     rng = np.random.default_rng(random_state)
@@ -91,10 +95,6 @@ def explain_single_target(
             )
         )
     sample_values = pd.concat(sample_rows, ignore_index=True)
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(output / "feature_summary.csv", index=False)
-    sample_values.to_csv(output / "sample_shap_top_features.csv.gz", index=False, compression="gzip")
     metadata = {
         "target": target,
         "method": method,
@@ -104,7 +104,34 @@ def explain_single_target(
         "n_features": expression.shape[1],
         "top_features_saved_per_sample": top_n,
     }
+    return summary, sample_values, metadata
+
+
+def write_explanation(output_dir, summary, sample_values, metadata) -> Path:
+    """Write the three SHAP outputs produced by :func:`run_single_target_explanation`."""
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(output / "feature_summary.csv", index=False)
+    sample_values.to_csv(output / "sample_shap_top_features.csv.gz", index=False, compression="gzip")
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return output
+
+
+def explain_single_target(
+    model,
+    expression: pd.DataFrame,
+    labels: pd.Series,
+    target: str,
+    target_index: int,
+    method: str,
+    output_dir: str | Path,
+    config: dict,
+) -> dict:
+    """Functional entry point used by the CLI: compute SHAP, write files, return metadata."""
+    summary, sample_values, metadata = run_single_target_explanation(
+        model, expression, labels, target, target_index, method, config
+    )
+    write_explanation(output_dir, summary, sample_values, metadata)
     return metadata
 
 
