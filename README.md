@@ -77,9 +77,61 @@ python examples/full_runtime_check.py
 
 The full check covers neural-network training, model persistence, prediction, embeddings, output-head weights, XGBoost Tree SHAP, neural-network SHAP, and TMB cross-validation.
 
-## One cancer example
+## Python API
 
-The following commands use TCGA lung adenocarcinoma, `LUAD`, and the manuscript preprocessing choices.
+The scripting API is three classes. A `Dataset` loads one or more TCGA cohorts and keeps
+the expression matrix, mutation labels, TMB, and cancer labels aligned to the same
+samples; `data.subset(...)` returns a smaller `Dataset`. `E2MModel` is the multitask
+mutation network and `TmbModel` is the tree regressor for TMB. Fit either one on a
+`Dataset`, then predict on another `Dataset` or on any samples-by-genes matrix. Results
+come back as pandas objects.
+
+```python
+from e2m import Dataset, E2MModel, TmbModel
+
+# Download, preprocess, and align a cohort (expression, mutations, TMB, cancer).
+data = Dataset.from_tcga(["LUAD"], data_dir="./e2m_data")
+data                                  # Dataset(samples=..., genes=..., targets=..., tmb=True, ...)
+
+# Hold out samples explicitly and fit on the rest.
+train = data.subset(samples=data.samples[:400])
+test = data.subset(samples=data.samples[400:])
+
+model = E2MModel().fit(train)         # or E2MModel(epochs=50, hidden_layers=[512, 256])
+probabilities = model.predict(test)   # samples x targets DataFrame
+metrics = model.cross_validate(data)  # per-target AUPRC, normalized-AUPRC, ROC-AUC, ...
+embeddings = model.embed(data)
+shap = model.explain(data, target="TP53", method="xgboost")  # in-memory SHAP; returns a DataFrame
+model.save("models/luad")             # E2MModel.load("models/luad") to reuse
+
+# Predict on any expression matrix (a subset, or an external cohort); genes align by symbol.
+model.predict(test.expression)
+
+# TMB regression with a pluggable tree ML model.
+tmb = TmbModel(ml_model="lightgbm").fit(data)         # xgboost (default), lightgbm, random_forest, gradient_boosting
+tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spearman/Pearson/MAE/RMSE
+```
+
+[examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) works through this on TCGA-LUAD,
+step by step. `examples/external_transfer.ipynb` trains on TCGA-LUAD and predicts on the
+GSE31210 external cohort. The stateless functional API (`e2m.cross_validate`, `e2m.train`,
+...) used by the CLI is also importable.
+
+`e2m.options()` returns the accepted expression datasets, transforms, TMB models, SHAP
+methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equivalent is
+`e2m options`). The workflow runs quietly by default; call `e2m.set_verbose()`, or pass
+`--verbose` on the CLI, to print step-by-step progress.
+
+```python
+import e2m
+e2m.options()["expression_transform"]     # {"log1p": ..., "raw": ..., "xena": ...}
+e2m.set_verbose()                          # print download / cross-validation / training progress
+```
+
+## Command line
+
+The `e2m` command runs the same workflow and writes the results to disk. These commands use
+TCGA lung adenocarcinoma, `LUAD`, with the manuscript preprocessing choices.
 
 ```bash
 # Download Xena STAR counts and MC3 mutation data, then export prepared tables.
@@ -114,56 +166,7 @@ e2m head-weights --model-dir models/luad \
   --output results/luad/head_weights.csv
 ```
 
-See [TUTORIAL.md](TUTORIAL.md) for the complete explanation of each step and output. A clean notebook version is available at [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb).
-
-## Python API
-
-For scripting, the package exposes two objects. A `Dataset` holds the aligned
-expression, mutation labels, TMB, and cancer labels; you subset it and pass it to a
-model. An `E2MModel` (multitask mutation network) and a `TmbModel` (tree regressor) are
-fitted on a dataset and predict on any dataset or samples-by-genes matrix. Methods return
-plain pandas objects.
-
-```python
-from e2m import Dataset, E2MModel, TmbModel
-
-# Download, preprocess, and align a cohort (expression, mutations, TMB, cancer).
-data = Dataset.from_tcga(["LUAD"], data_dir="./e2m_data")
-data                                  # Dataset(samples=..., genes=..., targets=..., tmb=True, ...)
-
-# Hold out samples explicitly and fit on the rest.
-train = data.subset(samples=data.samples[:400])
-test = data.subset(samples=data.samples[400:])
-
-model = E2MModel().fit(train)         # or E2MModel(epochs=50, hidden_layers=[512, 256])
-probabilities = model.predict(test)   # samples x targets DataFrame
-metrics = model.cross_validate(data)  # per-target AUPRC, normalized-AUPRC, ROC-AUC, ...
-embeddings = model.embed(data)
-shap = model.explain(data, target="TP53", method="xgboost")  # in-memory SHAP; returns a DataFrame
-model.save("models/luad")             # E2MModel.load("models/luad") to reuse
-
-# Predict on any expression matrix (a subset, or an external cohort); genes align by symbol.
-model.predict(test.expression)
-
-# TMB regression with a pluggable tree ML model.
-tmb = TmbModel(ml_model="lightgbm").fit(data)         # xgboost (default), lightgbm, random_forest, gradient_boosting
-tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spearman/Pearson/MAE/RMSE
-```
-
-`examples/external_transfer.ipynb` shows end-to-end cross-cohort prediction: it trains on
-TCGA-LUAD and predicts on the GSE31210 external cohort. The stateless functional API
-(`e2m.cross_validate`, `e2m.train`, ...) used by the CLI is also importable.
-
-`e2m.options()` returns the accepted expression datasets, transforms, TMB models, SHAP
-methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equivalent is
-`e2m options`). The workflow runs quietly by default; call `e2m.set_verbose()` — or pass
-`--verbose` on the CLI — to print step-by-step progress.
-
-```python
-import e2m
-e2m.options()["expression_transform"]     # {"log1p": ..., "raw": ..., "xena": ...}
-e2m.set_verbose()                          # print download / cross-validation / training progress
-```
+See [TUTORIAL.md](TUTORIAL.md) for what each step does and what it writes.
 
 ## Xena expression choices
 
