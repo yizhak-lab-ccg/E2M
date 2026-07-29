@@ -113,9 +113,10 @@ tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spe
 ```
 
 [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) works through this on TCGA-LUAD,
-step by step. `examples/external_transfer.ipynb` trains on TCGA-LUAD and predicts on the
-GSE31210 external cohort. The stateless functional API (`e2m.cross_validate`, `e2m.train`,
-...) used by the CLI is also importable.
+step by step. `examples/external_transfer.ipynb` trains on TCGA-LUAD, predicts on the
+GSE31210 external cohort, and scores EGFR and KRAS against the alteration status that
+cohort reports. The stateless functional API (`e2m.cross_validate`, `e2m.train`, ...) used
+by the CLI is also importable.
 
 `e2m.options()` returns the accepted expression datasets, transforms, TMB models, SHAP
 methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equivalent is
