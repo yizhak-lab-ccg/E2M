@@ -1,14 +1,67 @@
 from __future__ import annotations
 
 import copy
+import json
+from importlib import import_module
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
+
+from .config import load_config
+from .data import Dataset, align_expression
+
+TREE_MODELS = ("xgboost", "lightgbm", "random_forest", "gradient_boosting")
+_TREE_CLASSES = {
+    "xgboost": ("xgboost", "XGB"),
+    "lightgbm": ("lightgbm", "LGBM"),
+    "random_forest": ("sklearn.ensemble", "RandomForest"),
+    "gradient_boosting": ("sklearn.ensemble", "GradientBoosting"),
+}
+
+
+def make_tree_model(ml_model: str, kind: str, params: dict | None = None):
+    """Build an unfitted tree model; `kind` is "classifier" or "regressor"."""
+    if ml_model not in TREE_MODELS:
+        raise ValueError(f"ml_model must be one of {TREE_MODELS}; got {ml_model!r}.")
+    module_name, prefix = _TREE_CLASSES[ml_model]
+    try:
+        module = import_module(module_name)
+    except ImportError as exc:
+        raise ImportError(f'{ml_model} needs {module_name} (LightGBM: pip install -e ".[lightgbm]").') from exc
+    return getattr(module, prefix + kind.capitalize())(**dict(params or {}))
+
+
+def model_settings(config: dict, overrides: dict | None = None) -> dict:
+    return {
+        **config["model"]["multitask_nn"],
+        "standardize_inputs": config["preprocessing"].get(
+            "standardize_inputs", True
+        ),
+        "random_state": config["preprocessing"].get("random_state", 42),
+        **(overrides or {}),
+    }
+
+
+def tmb_ml_model_params(config: dict, ml_model: str | None = None):
+    ml_model = ml_model or config["model"].get("tmb_ml_model", "xgboost")
+    return ml_model, dict(config["model"].get(ml_model, {}))
+
+
+def _as_dataset(data, mutations=None, tmb=None, cancer=None) -> Dataset:
+    """Wrap a samples-by-genes frame as a Dataset; explicit labels replace the Dataset's own."""
+    if isinstance(data, Dataset):
+        mutations = data.mutations if mutations is None else mutations
+        tmb = data.tmb if tmb is None else tmb
+        cancer = data.cancer if cancer is None else cancer
+        data = data.expression
+    return Dataset(data, mutations, tmb, cancer)
 
 
 class MultitaskNetwork(nn.Module):
@@ -28,87 +81,93 @@ class MultitaskNetwork(nn.Module):
         return self.output(self.encoder(values))
 
 
-class MultitaskModel:
-    def __init__(self, input_size: int, output_size: int, **settings):
-        self.input_size = int(input_size)
-        self.output_size = int(output_size)
-        self.settings = {
-            "hidden_layers": list(settings.get("hidden_layers", [512, 256])),
-            "dropout_rate": float(settings.get("dropout_rate", 0.3)),
-            "learning_rate": float(settings.get("learning_rate", 0.0005)),
-            "weight_decay": float(settings.get("weight_decay", 0.0003)),
-            "batch_size": int(settings.get("batch_size", 64)),
-            "epochs": int(settings.get("epochs", 100)),
-            "patience": int(settings.get("patience", 6)),
-            "validation_split": float(settings.get("validation_split", 0.15)),
-            "gradient_clip": float(settings.get("gradient_clip", 1.0)),
-            "use_pos_weight": bool(settings.get("use_pos_weight", True)),
-            "standardize_inputs": bool(settings.get("standardize_inputs", True)),
-            "random_state": int(settings.get("random_state", 42)),
-        }
+class E2MModel:
+    """Multitask network predicting mutation status from expression; settings come from `config` plus keyword overrides."""
+
+    def __init__(self, config: Optional[dict] = None, **hyperparameters):
+        self.config = config if config is not None else load_config()
+        self.hyperparameters = hyperparameters
+        self.settings = model_settings(self.config, hyperparameters)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.network = self._new_network().to(self.device)
-        self.scaler: StandardScaler | None = None
+        self.network: Optional[MultitaskNetwork] = None
+        self.scaler: Optional[StandardScaler] = None
         self.history: list[dict] = []
+        self.features: Optional[list] = None
+        self.targets: Optional[list] = None
+        self.feature_means: Optional[np.ndarray] = None
+        self.metadata: dict = {}
 
-    def _new_network(self) -> MultitaskNetwork:
-        return MultitaskNetwork(
-            self.input_size,
-            self.output_size,
-            self.settings["hidden_layers"],
-            self.settings["dropout_rate"],
-        )
-
-    def fit(self, expression, labels) -> "MultitaskModel":
-        x = _float_array(expression)
-        y = _float_array(labels)
+    # ------------------------------------------------------------------ fit
+    def fit(self, data, mutations=None, early_stopping: bool = False) -> "E2MModel":
+        """Train on all samples, or with early stopping on an internal validation split."""
+        dataset = _as_dataset(data, mutations)
+        if dataset.mutations is None:
+            raise ValueError("E2MModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
+        x = _float_array(dataset.expression)
+        y = _float_array(dataset.mutations)
         if self.settings["standardize_inputs"]:
             self.scaler = StandardScaler()
             x = self.scaler.fit_transform(x).astype(np.float32)
-        indices = np.arange(len(x))
-        train_idx, validation_idx = train_test_split(
-            indices,
-            test_size=self.settings["validation_split"],
-            random_state=self.settings["random_state"],
-            shuffle=True,
-        )
-        train_loader = self._loader(x[train_idx], y[train_idx], shuffle=True)
-        validation_loader = self._loader(x[validation_idx], y[validation_idx], shuffle=False)
-        self._train(train_loader, y[train_idx], validation_loader)
-        return self
+        if early_stopping:
+            train_idx, validation_idx = train_test_split(
+                np.arange(len(x)),
+                test_size=self.settings["validation_split"],
+                random_state=self.settings["random_state"],
+                shuffle=True,
+            )
+            self._train(
+                self._loader(x[train_idx], y[train_idx], shuffle=True),
+                y[train_idx],
+                self._loader(x[validation_idx], y[validation_idx], shuffle=False),
+            )
+        else:
+            self._train(self._loader(x, y, shuffle=True), y, validation_loader=None)
 
-    def fit_full(self, expression, labels) -> "MultitaskModel":
-        x = _float_array(expression)
-        y = _float_array(labels)
-        if self.settings["standardize_inputs"]:
-            self.scaler = StandardScaler()
-            x = self.scaler.fit_transform(x).astype(np.float32)
-        loader = self._loader(x, y, shuffle=True)
-        self._train(loader, y, validation_loader=None)
+        self.features = dataset.expression.columns.tolist()
+        self.targets = dataset.mutations.columns.tolist()
+        self.feature_means = dataset.expression.mean(axis=0).to_numpy(dtype=np.float32)
+        self.metadata = {
+            "n_samples": len(x),
+            "n_features": x.shape[1],
+            "n_targets": y.shape[1],
+            "model": self.settings,
+        }
+        # Recorded so a saved bundle knows its cohorts (the CLI's explain reloads them).
+        if isinstance(data, Dataset):
+            self.metadata["cancers"] = sorted(data.cancer.dropna().unique().tolist())
         return self
 
     def _loader(self, x: np.ndarray, y: np.ndarray, shuffle: bool) -> DataLoader:
         dataset = TensorDataset(torch.from_numpy(x), torch.from_numpy(y))
-        return DataLoader(dataset, batch_size=self.settings["batch_size"], shuffle=shuffle)
+        return DataLoader(dataset, batch_size=int(self.settings["batch_size"]), shuffle=shuffle)
+
+    def _new_network(self, input_size: int, output_size: int) -> MultitaskNetwork:
+        return MultitaskNetwork(
+            input_size,
+            output_size,
+            list(self.settings["hidden_layers"]),
+            float(self.settings["dropout_rate"]),
+        )
 
     def _train(self, train_loader: DataLoader, train_labels: np.ndarray, validation_loader: DataLoader | None):
-        torch.manual_seed(self.settings["random_state"])
+        settings = self.settings
+        torch.manual_seed(settings["random_state"])
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(self.settings["random_state"])
-        self.network = self._new_network().to(self.device)
+            torch.cuda.manual_seed_all(settings["random_state"])
+        self.network = self._new_network(train_loader.dataset.tensors[0].shape[1], train_labels.shape[1]).to(self.device)
         optimizer = torch.optim.Adam(
             self.network.parameters(),
-            lr=self.settings["learning_rate"],
-            weight_decay=self.settings["weight_decay"],
+            lr=float(settings["learning_rate"]),
+            weight_decay=float(settings["weight_decay"]),
         )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
             factor=0.5,
-            patience=max(1, self.settings["patience"] // 3),
+            patience=max(1, int(settings["patience"]) // 3),
         )
         pos_weight = None
-        if self.settings["use_pos_weight"]:
+        if settings["use_pos_weight"]:
             positives = torch.from_numpy(train_labels).sum(dim=0)
             negatives = len(train_labels) - positives
             pos_weight = torch.where(positives > 0, negatives / positives, torch.ones_like(positives))
@@ -118,8 +177,8 @@ class MultitaskModel:
         best_state = None
         stalled = 0
         self.history = []
-        for epoch in range(self.settings["epochs"]):
-            train_loss = self._epoch(train_loader, criterion, optimizer)
+        for epoch in range(int(settings["epochs"])):
+            train_loss = self._epoch(train_loader, criterion, optimizer, settings["gradient_clip"])
             row = {"epoch": epoch + 1, "train_loss": train_loss}
             if validation_loader is not None:
                 validation_loss = self._epoch(validation_loader, criterion, None)
@@ -133,13 +192,13 @@ class MultitaskModel:
                 else:
                     stalled += 1
             self.history.append(row)
-            if validation_loader is not None and stalled >= self.settings["patience"]:
+            if validation_loader is not None and stalled >= int(settings["patience"]):
                 break
         if best_state is not None:
             self.network.load_state_dict(best_state)
         self.network.eval()
 
-    def _epoch(self, loader: DataLoader, criterion, optimizer) -> float:
+    def _epoch(self, loader: DataLoader, criterion, optimizer, gradient_clip=None) -> float:
         training = optimizer is not None
         self.network.train(training)
         total = 0.0
@@ -153,36 +212,89 @@ class MultitaskModel:
                 loss = criterion(self.network(x_batch), y_batch)
                 if training:
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.settings["gradient_clip"])
+                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), float(gradient_clip))
                     optimizer.step()
                 total += float(loss.item()) * len(x_batch)
                 count += len(x_batch)
         return total / max(count, 1)
 
+    # -------------------------------------------------------------- predict
     def transform(self, expression) -> np.ndarray:
+        """Training-scaled float32 array of an already-aligned expression matrix."""
         x = _float_array(expression)
         if self.scaler is not None:
             x = self.scaler.transform(x).astype(np.float32)
         return x
 
-    def predict(self, expression) -> tuple[np.ndarray, np.ndarray]:
-        x = self.transform(expression)
+    def _align(self, data, min_feature_overlap) -> pd.DataFrame:
+        default = self.config["data"].get("min_feature_overlap", 0.8)
+        overlap = default if min_feature_overlap is None else min_feature_overlap
+        aligned, _ = align_expression(_as_dataset(data).expression, self.features, self.feature_means, overlap)
+        return aligned
+
+    def predict(self, data, min_feature_overlap=None) -> pd.DataFrame:
+        """Mutation probabilities (samples x targets)."""
+        self._check_fitted()
+        aligned = self._align(data, min_feature_overlap)
         self.network.eval()
         with torch.no_grad():
-            logits = self.network(torch.from_numpy(x).to(self.device))
+            logits = self.network(torch.from_numpy(self.transform(aligned.values)).to(self.device))
             probabilities = torch.sigmoid(logits).cpu().numpy()
-        return (probabilities >= 0.5).astype(np.int8), probabilities
+        return pd.DataFrame(probabilities, index=aligned.index, columns=self.targets)
 
-    def embeddings(self, expression) -> np.ndarray:
-        x = self.transform(expression)
+    def embed(self, data, min_feature_overlap=None) -> pd.DataFrame:
+        """Shared-encoder embeddings (samples x embedding dims)."""
+        self._check_fitted()
+        aligned = self._align(data, min_feature_overlap)
         self.network.eval()
         with torch.no_grad():
-            return self.network.encoder(torch.from_numpy(x).to(self.device)).cpu().numpy()
+            values = self.network.encoder(torch.from_numpy(self.transform(aligned.values)).to(self.device)).cpu().numpy()
+        columns = [f"embedding_{i}" for i in range(values.shape[1])]
+        return pd.DataFrame(values, index=aligned.index, columns=columns)
 
-    def head_weights(self) -> np.ndarray:
-        return self.network.output.weight.detach().cpu().numpy()
+    def head_weights(self) -> pd.DataFrame:
+        """One output-head weight vector per mutation target."""
+        self._check_fitted()
+        values = self.network.output.weight.detach().cpu().numpy()
+        columns = [f"weight_{i}" for i in range(values.shape[1])]
+        return pd.DataFrame(values, index=self.targets, columns=columns)
 
-    def save(self, path: str | Path) -> None:
+    # ----------------------------------------------------------- interpret
+    def explain(self, data, target, method="xgboost", output=None, min_feature_overlap=1.0) -> pd.DataFrame:
+        """SHAP feature summary for one target on in-memory `data` (needs its mutation labels)."""
+        self._check_fitted()
+        from .interpretation import run_single_target_explanation, write_explanation
+
+        if self.targets is None or target not in self.targets:
+            raise ValueError(f"Target {target!r} is not in this model's targets.")
+        mutations = _as_dataset(data).mutations
+        if mutations is None or target not in mutations.columns:
+            raise ValueError(f"explain needs mutation labels for {target!r} (pass a Dataset with mutations).")
+        aligned = self._align(data, min_feature_overlap)
+        labels = mutations[target].reindex(aligned.index)
+        summary, sample_values, metadata = run_single_target_explanation(
+            self, aligned, labels, target, self.targets.index(target), method, self.config
+        )
+        if output is not None:
+            write_explanation(output, summary, sample_values, metadata)
+        return summary
+
+    # ------------------------------------------------------------ evaluate
+    def cross_validate(self, data, mutations=None, cancer=None, output=None) -> pd.DataFrame:
+        """Out-of-fold metrics for this model's settings; writes the tables to `output` if given."""
+        from .training import cross_validate_mutations
+
+        dataset = _as_dataset(data, mutations, cancer=cancer)
+        if dataset.mutations is None:
+            raise ValueError("cross_validate needs mutation labels (a Dataset with mutations, or mutations=).")
+        metrics, _ = cross_validate_mutations(
+            dataset.expression, dataset.mutations, dataset.cancer, self.config, self.hyperparameters, output
+        )
+        return metrics
+
+    # ----------------------------------------------------------- persistence
+    def save_checkpoint(self, path) -> None:
+        """Write the network weights, scaler, settings, and history to one torch file."""
         scaler = None
         if self.scaler is not None:
             scaler = {
@@ -193,8 +305,8 @@ class MultitaskModel:
             }
         torch.save(
             {
-                "input_size": self.input_size,
-                "output_size": self.output_size,
+                "input_size": len(self.features),
+                "output_size": len(self.targets),
                 "settings": self.settings,
                 "network_state": self.network.state_dict(),
                 "scaler": scaler,
@@ -203,10 +315,28 @@ class MultitaskModel:
             Path(path),
         )
 
+    def save(self, output_dir) -> Path:
+        """Write the model bundle (the layout the CLI's predict/embed read)."""
+        self._check_fitted()
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        self.save_checkpoint(output / "model.pt")
+        np.save(output / "feature_means.npy", self.feature_means)
+        (output / "features.json").write_text(json.dumps(self.features), encoding="utf-8")
+        (output / "targets.json").write_text(json.dumps(self.targets), encoding="utf-8")
+        bundle_metadata = {**self.metadata, "training_config": self.config}
+        (output / "model_metadata.json").write_text(json.dumps(bundle_metadata, indent=2), encoding="utf-8")
+        return output
+
     @classmethod
-    def load(cls, path: str | Path) -> "MultitaskModel":
-        checkpoint = torch.load(Path(path), map_location="cpu")
-        model = cls(checkpoint["input_size"], checkpoint["output_size"], **checkpoint["settings"])
+    def load(cls, model_dir) -> "E2MModel":
+        """Load a bundle written by `save` or the CLI `train`."""
+        directory = Path(model_dir)
+        metadata = json.loads((directory / "model_metadata.json").read_text(encoding="utf-8"))
+        model = cls(config=metadata.get("training_config"))
+        checkpoint = torch.load(directory / "model.pt", map_location="cpu")
+        model.settings = checkpoint["settings"]
+        model.network = model._new_network(checkpoint["input_size"], checkpoint["output_size"])
         model.network.load_state_dict(checkpoint["network_state"])
         model.network.to(model.device).eval()
         if checkpoint.get("scaler") is not None:
@@ -217,7 +347,84 @@ class MultitaskModel:
             model.scaler.var_ = np.asarray(state["var"])
             model.scaler.n_features_in_ = int(state["n_features_in"])
         model.history = checkpoint.get("history", [])
+        model.features = json.loads((directory / "features.json").read_text(encoding="utf-8"))
+        model.targets = json.loads((directory / "targets.json").read_text(encoding="utf-8"))
+        model.feature_means = np.load(directory / "feature_means.npy")
+        model.metadata = metadata
         return model
+
+    def _check_fitted(self) -> None:
+        if self.network is None:
+            raise ValueError("Model is not fitted. Call fit(dataset) or E2MModel.load(dir).")
+
+    def __repr__(self) -> str:
+        state = "fitted" if self.network is not None else "unfitted"
+        targets = 0 if self.targets is None else len(self.targets)
+        return f"E2MModel({state}, targets={targets})"
+
+
+class TmbModel:
+    """Tree regressor predicting log2(TMB + 1) from expression; samples without a TMB label are dropped."""
+
+    def __init__(self, ml_model: Optional[str] = None, config: Optional[dict] = None, **params):
+        self.config = config if config is not None else load_config()
+        self.ml_model = ml_model or self.config["model"].get("tmb_ml_model", "xgboost")
+        self.params = params
+        self.regressor = None
+        self.features: Optional[list] = None
+        self.feature_means: Optional[np.ndarray] = None
+
+    def _resolved_params(self) -> dict:
+        _, base = tmb_ml_model_params(self.config, self.ml_model)
+        base.update(self.params)
+        return base
+
+    def fit(self, data, tmb=None) -> "TmbModel":
+        dataset = _as_dataset(data, tmb=tmb)
+        if dataset.tmb is None:
+            raise ValueError("TmbModel.fit needs TMB labels (a Dataset with tmb, or tmb=).")
+        index = dataset.tmb.index[dataset.tmb["TMB_log2"].notna()]
+        expression = dataset.expression.loc[index]
+        self.regressor = make_tree_model(self.ml_model, "regressor", self._resolved_params())
+        self.regressor.fit(expression.values, dataset.tmb.loc[index, "TMB_log2"].to_numpy())
+        self.features = expression.columns.tolist()
+        self.feature_means = expression.mean(axis=0).to_numpy(dtype=np.float32)
+        return self
+
+    def predict(self, data, min_feature_overlap=None) -> pd.DataFrame:
+        """Predicted TMB_log2_pred and TMB_pred per sample."""
+        if self.regressor is None:
+            raise ValueError("Model is not fitted. Call fit(dataset).")
+        threshold = self.config["data"].get("min_feature_overlap", 0.8) if min_feature_overlap is None else min_feature_overlap
+        aligned, _ = align_expression(_as_dataset(data).expression, self.features, self.feature_means, threshold)
+        predicted = self.regressor.predict(aligned.values)
+        return pd.DataFrame(
+            {"TMB_log2_pred": predicted, "TMB_pred": np.maximum(np.power(2.0, predicted) - 1.0, 0.0)},
+            index=aligned.index,
+        )
+
+    def cross_validate(self, data, tmb=None, cancer=None, output=None) -> pd.DataFrame:
+        """Out-of-fold TMB regression; returns the per-cancer and overall summary."""
+        from .training import cross_validate_tmb
+
+        dataset = _as_dataset(data, tmb=tmb, cancer=cancer)
+        if dataset.tmb is None:
+            raise ValueError("cross_validate needs TMB labels (a Dataset with tmb, or tmb=).")
+        index = dataset.tmb.index[dataset.tmb["TMB_log2"].notna()]
+        summary, _ = cross_validate_tmb(
+            dataset.expression.loc[index],
+            dataset.tmb.loc[index],
+            dataset.cancer.loc[index],
+            self.config,
+            ml_model=self.ml_model,
+            params=self._resolved_params(),
+            output=output,
+        )
+        return summary
+
+    def __repr__(self) -> str:
+        state = "fitted" if self.regressor is not None else "unfitted"
+        return f"TmbModel(ml_model={self.ml_model!r}, {state})"
 
 
 def _float_array(values) -> np.ndarray:

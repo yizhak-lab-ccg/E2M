@@ -4,7 +4,7 @@ import argparse
 import json
 
 from . import workflow
-from .backends import TREE_MODELS
+from .models import TREE_MODELS
 from .data import EXPRESSION_DATASETS, EXPRESSION_TRANSFORMS
 from .logging_utils import set_verbose
 from .options import format_options

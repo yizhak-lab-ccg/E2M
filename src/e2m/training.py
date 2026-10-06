@@ -7,26 +7,9 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
 
-from .backends import make_regressor
 from .evaluation import evaluate_predictions, tmb_metrics
 from .logging_utils import logger
-from .models import MultitaskModel
-
-
-def model_settings(config: dict, overrides: dict | None = None) -> dict:
-    return {
-        **config["model"]["multitask_nn"],
-        "standardize_inputs": config["preprocessing"].get(
-            "standardize_inputs", True
-        ),
-        "random_state": config["preprocessing"].get("random_state", 42),
-        **(overrides or {}),
-    }
-
-
-def tmb_ml_model_params(config: dict, ml_model: str | None = None):
-    ml_model = ml_model or config["model"].get("tmb_ml_model", "xgboost")
-    return ml_model, dict(config["model"].get(ml_model, {}))
+from .models import E2MModel, make_tree_model, model_settings, tmb_ml_model_params
 
 
 def cross_validate(cancer: pd.Series, config: dict, fit_predict, dtype):
@@ -107,16 +90,13 @@ def cross_validate_mutations(
     )
 
     def fit_predict(train_idx, test_idx):
-        model = MultitaskModel(
-            expression.shape[1],
-            mutations.shape[1],
-            **settings,
-        )
+        model = E2MModel(config, **(model_overrides or {}))
         model.fit(
-            expression.iloc[train_idx].values,
-            mutations.iloc[train_idx].values,
+            expression.iloc[train_idx],
+            mutations.iloc[train_idx],
+            early_stopping=True,
         )
-        return model.predict(expression.iloc[test_idx].values)[1]
+        return model.predict(expression.iloc[test_idx]).to_numpy()
 
     probabilities, fold_ids, split_method = cross_validate(
         cancer,
@@ -206,7 +186,7 @@ def cross_validate_tmb(
     )
 
     def fit_predict(train_idx, test_idx):
-        model = make_regressor(ml_model, resolved_params)
+        model = make_tree_model(ml_model, "regressor", resolved_params)
         model.fit(
             expression.iloc[train_idx],
             truth[train_idx],
@@ -325,13 +305,8 @@ def train_full(
         settings.get("epochs", "default"),
     )
 
-    model = MultitaskModel(
-        expression.shape[1],
-        mutations.shape[1],
-        **settings,
-    )
-    model.fit_full(expression.values, mutations.values)
-    model.save(output / "model.pt")
+    model = E2MModel(config, **(model_overrides or {})).fit(expression, mutations)
+    model.save_checkpoint(output / "model.pt")
 
     np.save(
         output / "feature_means.npy",

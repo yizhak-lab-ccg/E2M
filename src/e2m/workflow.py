@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from .config import _read_yaml, deep_update, load_config
 from .data import XenaTCGALoader, align_expression, normalize_cancers
+from .models import E2MModel
 
 
 def download(
@@ -96,41 +95,38 @@ def predict_tmb(
 
 
 def predict(model_dir, expression_path, output_path, min_feature_overlap=None) -> dict:
-    model, features, targets, means, metadata = _load_bundle(model_dir)
+    model = E2MModel.load(model_dir)
     expression = _read_expression(expression_path)
     aligned, overlap = align_expression(
         expression,
-        features,
-        means,
-        _bundle_overlap(metadata) if min_feature_overlap is None else min_feature_overlap,
+        model.features,
+        model.feature_means,
+        _bundle_overlap(model.metadata) if min_feature_overlap is None else min_feature_overlap,
     )
-    _, probabilities = model.predict(aligned.values)
-    output = pd.DataFrame(probabilities, index=aligned.index, columns=targets)
+    output = model.predict(aligned)
     _write_frame(output, output_path)
-    return {"n_samples": len(output), "n_targets": len(targets), "feature_overlap": overlap, "output": str(output_path)}
+    return {"n_samples": len(output), "n_targets": len(model.targets), "feature_overlap": overlap, "output": str(output_path)}
 
 
 def embed(model_dir, expression_path, output_path, min_feature_overlap=None) -> dict:
-    model, features, _, means, metadata = _load_bundle(model_dir)
+    model = E2MModel.load(model_dir)
     expression = _read_expression(expression_path)
     aligned, overlap = align_expression(
         expression,
-        features,
-        means,
-        _bundle_overlap(metadata) if min_feature_overlap is None else min_feature_overlap,
+        model.features,
+        model.feature_means,
+        _bundle_overlap(model.metadata) if min_feature_overlap is None else min_feature_overlap,
     )
-    values = model.embeddings(aligned.values)
-    output = pd.DataFrame(values, index=aligned.index, columns=[f"embedding_{i}" for i in range(values.shape[1])])
+    output = model.embed(aligned)
     _write_frame(output, output_path)
-    return {"n_samples": len(output), "embedding_size": values.shape[1], "feature_overlap": overlap, "output": str(output_path)}
+    return {"n_samples": len(output), "embedding_size": output.shape[1], "feature_overlap": overlap, "output": str(output_path)}
 
 
 def head_weights(model_dir, output_path) -> dict:
-    model, _, targets, _, _ = _load_bundle(model_dir)
-    values = model.head_weights()
-    output = pd.DataFrame(values, index=targets, columns=[f"weight_{i}" for i in range(values.shape[1])])
+    model = E2MModel.load(model_dir)
+    output = model.head_weights()
     _write_frame(output, output_path)
-    return {"n_targets": len(targets), "embedding_size": values.shape[1], "output": str(output_path)}
+    return {"n_targets": len(model.targets), "embedding_size": output.shape[1], "output": str(output_path)}
 
 
 def explain(
@@ -144,7 +140,8 @@ def explain(
 ) -> dict:
     from .interpretation import explain_single_target
 
-    model, features, targets, means, metadata = _load_bundle(model_dir)
+    model = E2MModel.load(model_dir)
+    features, targets, means, metadata = model.features, model.targets, model.feature_means, model.metadata
     if target not in targets:
         raise ValueError(f"Target {target!r} is not in this model. Available targets are stored in targets.json.")
     config = metadata.get("training_config") or load_config()
@@ -178,18 +175,6 @@ def _data_config(config_path, cancers, data_overrides) -> tuple[dict[str, Any], 
     selected = normalize_cancers(cancers or config["data"].get("cancers"))
     config["data"]["cancers"] = selected
     return config, selected
-
-
-def _load_bundle(model_dir):
-    from .models import MultitaskModel
-
-    directory = Path(model_dir)
-    model = MultitaskModel.load(directory / "model.pt")
-    features = json.loads((directory / "features.json").read_text(encoding="utf-8"))
-    targets = json.loads((directory / "targets.json").read_text(encoding="utf-8"))
-    means = np.load(directory / "feature_means.npy")
-    metadata = json.loads((directory / "model_metadata.json").read_text(encoding="utf-8"))
-    return model, features, targets, means, metadata
 
 
 def _read_expression(path) -> pd.DataFrame:

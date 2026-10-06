@@ -31,7 +31,7 @@ def run_single_target_explanation(
     else:
         explained_expression = expression
 
-    from .backends import TREE_MODELS
+    from .models import TREE_MODELS
 
     method = method.lower()
     if method in TREE_MODELS:
@@ -147,7 +147,7 @@ def _require_shap():
 def _explain_tree(expression, labels, explained_expression, ml_model, settings):
     """Train a tree classifier for one target and explain it with Tree SHAP.
 
-    ``ml_model`` is one of :data:`e2m.backends.TREE_MODELS`. Class imbalance is handled
+    ``ml_model`` is one of :data:`e2m.models.TREE_MODELS`. Class imbalance is handled
     per model: ``scale_pos_weight`` for the boosting models, ``class_weight`` for the
     random forest, and balanced per-sample weights for scikit-learn gradient boosting.
 
@@ -155,7 +155,7 @@ def _explain_tree(expression, labels, explained_expression, ml_model, settings):
     ``shap`` delegates to for XGBoost), which needs no ``shap`` install and is robust across
     XGBoost serialization versions. The other models use ``shap.TreeExplainer``.
     """
-    from .backends import make_classifier
+    from .models import make_tree_model
 
     y = labels.astype(int).to_numpy()
     if len(np.unique(y)) < 2:
@@ -174,7 +174,7 @@ def _explain_tree(expression, labels, explained_expression, ml_model, settings):
         weight_negative = len(y) / (2.0 * max(negatives, 1))
         fit_kwargs["sample_weight"] = np.where(y == 1, weight_positive, weight_negative)
 
-    classifier = make_classifier(ml_model, parameters)
+    classifier = make_tree_model(ml_model, "classifier", parameters)
     classifier.fit(expression.values, y, **fit_kwargs)
 
     if ml_model == "xgboost":

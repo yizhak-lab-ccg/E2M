@@ -12,7 +12,7 @@ or pick a TMB model::
 
 from __future__ import annotations
 
-from .backends import TREE_MODELS
+from .models import TREE_MODELS
 from .data import EXPRESSION_DATASETS, EXPRESSION_TRANSFORMS
 
 # The 33 TCGA cohort codes hosted on the UCSC Xena GDC hub. Any code Xena serves

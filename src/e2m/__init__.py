@@ -2,7 +2,7 @@
 
 from .data import Dataset
 from .logging_utils import set_verbose
-from .model import E2MModel, TmbModel
+from .models import E2MModel, TmbModel
 from .options import format_options, options
 from .workflow import cross_validate, download, embed, explain, head_weights, predict, predict_tmb, train
 
