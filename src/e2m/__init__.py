@@ -1,29 +1,6 @@
-"""Expression-to-mutation prediction from RNA expression.
+"""Predict somatic mutation status and TMB from RNA expression."""
 
-Two ways to use the package:
-
-* Objects — a :class:`Dataset` holds aligned expression / mutations / TMB, and an
-  :class:`E2MModel` is fitted on a dataset and predicts on any dataset or
-  expression matrix. Methods return plain pandas objects::
-
-      from e2m import Dataset, E2MModel
-      data  = Dataset.from_tcga(["LUAD"], data_dir="./e2m_data")
-      model = E2MModel().fit(data.subset(samples=train_ids))
-      probs = model.predict(data.subset(samples=test_ids))   # DataFrame
-      metrics = model.cross_validate(data)                   # DataFrame
-
-  TMB prediction uses :class:`TmbModel` (pluggable tree ML model).
-
-* The stateless functional API (also what the ``e2m`` CLI calls):
-  :func:`download`, :func:`cross_validate`, :func:`train`, :func:`predict_tmb`,
-  :func:`predict`, :func:`embed`, :func:`head_weights`, :func:`explain`.
-
-Call :func:`set_verbose` to print progress, and :func:`options` to see the accepted
-expression datasets, transforms, TMB models, and TCGA cancer codes.
-"""
-
-from .data import PreparedData
-from .dataset import Dataset
+from .data import Dataset
 from .logging_utils import set_verbose
 from .model import E2MModel, TmbModel
 from .options import format_options, options
@@ -34,7 +11,6 @@ __all__ = [
     "Dataset",
     "E2MModel",
     "TmbModel",
-    "PreparedData",
     # functional API
     "download",
     "cross_validate",

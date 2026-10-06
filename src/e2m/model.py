@@ -9,7 +9,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from .config import resolve_config
+from .config import load_config
+from .data import align_expression
 from .models import MultitaskModel as _MultitaskNetwork
 from .training import model_settings, run_cross_validation, write_cross_validation
 
@@ -37,7 +38,7 @@ class E2MModel:
     """
 
     def __init__(self, config: Optional[dict] = None, **hyperparameters):
-        self.config = config if config is not None else resolve_config()
+        self.config = config if config is not None else load_config()
         self.hyperparameters = hyperparameters
         self.network: Optional[_MultitaskNetwork] = None
         self.features: Optional[list] = None
@@ -73,8 +74,6 @@ class E2MModel:
 
     # -------------------------------------------------------------- predict
     def _align(self, data, min_feature_overlap):
-        from .workflow import align_expression
-
         expression = _expression(data)
         default = self.config["data"].get("min_feature_overlap", 0.8)
         overlap = default if min_feature_overlap is None else min_feature_overlap
@@ -209,7 +208,7 @@ class TmbModel:
     """
 
     def __init__(self, ml_model: Optional[str] = None, config: Optional[dict] = None, **params):
-        self.config = config if config is not None else resolve_config()
+        self.config = config if config is not None else load_config()
         self.ml_model = ml_model or self.config["model"].get("tmb_ml_model", "xgboost")
         self.params = params
         self.regressor = None
@@ -240,16 +239,8 @@ class TmbModel:
     def predict(self, data, min_feature_overlap=None) -> pd.DataFrame:
         if self.regressor is None:
             raise ValueError("Model is not fitted. Call fit(dataset).")
-        expression = _expression(data)
-        overlap = len(set(self.features).intersection(expression.columns)) / max(len(self.features), 1)
         threshold = self.config["data"].get("min_feature_overlap", 0.8) if min_feature_overlap is None else min_feature_overlap
-        if overlap < threshold:
-            raise ValueError(
-                f"Expression feature overlap is {overlap:.1%}; at least {threshold:.1%} is required. "
-                "Use the same expression quantity, transform, and gene symbols used for training."
-            )
-        aligned = expression.reindex(columns=self.features)
-        aligned = aligned.fillna(pd.Series(self.feature_means, index=self.features)).astype(np.float32)
+        aligned, _ = align_expression(_expression(data), self.features, self.feature_means, threshold)
         predicted = self.regressor.predict(aligned.values)
         return pd.DataFrame(
             {"TMB_log2_pred": predicted, "TMB_pred": np.maximum(np.power(2.0, predicted) - 1.0, 0.0)},

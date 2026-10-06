@@ -7,8 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .config import deep_update, load_config, resolve_config
-from .data import XenaTCGALoader, normalize_cancers
+from .config import _read_yaml, deep_update, load_config
+from .data import XenaTCGALoader, align_expression, normalize_cancers
 
 
 def download(
@@ -151,9 +151,9 @@ def explain(
     model, features, targets, means, metadata = _load_bundle(model_dir)
     if target not in targets:
         raise ValueError(f"Target {target!r} is not in this model. Available targets are stored in targets.json.")
-    config = metadata.get("training_config") or resolve_config()
+    config = metadata.get("training_config") or load_config()
     if config_path:
-        config = deep_update(config, load_config(config_path))
+        config = deep_update(config, _read_yaml(Path(config_path)))
     cancers = metadata.get("cancers")
     if not cancers:
         raise ValueError(
@@ -177,28 +177,8 @@ def explain(
     )
 
 
-def align_expression(
-    expression: pd.DataFrame,
-    features: list[str],
-    fill_values: np.ndarray,
-    min_overlap: float,
-) -> tuple[pd.DataFrame, float]:
-    if expression.columns.duplicated().any():
-        expression = expression.T.groupby(level=0, sort=False).mean().T
-    overlap_count = len(set(features).intersection(expression.columns))
-    overlap = overlap_count / max(len(features), 1)
-    if overlap < min_overlap:
-        raise ValueError(
-            f"Expression feature overlap is {overlap:.1%}; at least {min_overlap:.1%} is required. "
-            "Use the same expression quantity, transform, and gene symbols used for training."
-        )
-    aligned = expression.reindex(columns=features)
-    aligned = aligned.fillna(pd.Series(fill_values, index=features))
-    return aligned.astype(np.float32), overlap
-
-
 def _data_config(config_path, cancers, data_overrides) -> tuple[dict[str, Any], list[str]]:
-    config = resolve_config(config_path, {"data": data_overrides or {}})
+    config = load_config(config_path, {"data": data_overrides or {}})
     selected = normalize_cancers(cancers or config["data"].get("cancers"))
     config["data"]["cancers"] = selected
     return config, selected

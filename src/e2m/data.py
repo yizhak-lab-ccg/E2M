@@ -5,15 +5,15 @@ import hashlib
 import json
 import re
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 import joblib
 import numpy as np
 import pandas as pd
 import requests
 
+from .config import load_config
 from .logging_utils import logger
 
 
@@ -21,11 +21,90 @@ EXPRESSION_DATASETS = ("star_counts", "star_tpm", "star_fpkm", "star_fpkm_uq")
 EXPRESSION_TRANSFORMS = ("log1p", "raw", "xena")
 
 
-@dataclass
-class PreparedData:
-    expression: pd.DataFrame
-    mutations: pd.DataFrame
-    cancer: pd.Series
+class Dataset:
+    """Samples-by-genes expression with aligned mutation labels, TMB, and cancer labels."""
+
+    def __init__(self, expression: pd.DataFrame, mutations=None, tmb=None, cancer=None):
+        self.expression = expression
+        self.mutations = mutations.reindex(expression.index) if mutations is not None else None
+        self.tmb = tmb.reindex(expression.index) if tmb is not None else None
+        if cancer is None:
+            cancer = pd.Series("cohort", index=expression.index, name="cancer")
+        self.cancer = pd.Series(cancer, name="cancer").reindex(expression.index)
+
+    @classmethod
+    def from_tcga(
+        cls,
+        cancers=None,
+        data_dir=None,
+        config=None,
+        data_overrides=None,
+        use_cache: bool = True,
+        with_tmb: bool = True,
+    ) -> "Dataset":
+        cfg = load_config(config, {"data": data_overrides or {}})
+        selected = normalize_cancers(cancers or cfg["data"].get("cancers"))
+        cfg["data"]["cancers"] = selected
+        loader = XenaTCGALoader(cfg, data_dir=data_dir, use_cache=use_cache)
+        data = loader.prepare(selected)
+        tmb = pd.concat(loader._load_tmb(cancer) for cancer in selected) if with_tmb else None
+        return cls(data.expression, data.mutations, tmb, data.cancer)
+
+    @property
+    def samples(self) -> pd.Index:
+        return self.expression.index
+
+    @property
+    def genes(self) -> pd.Index:
+        return self.expression.columns
+
+    @property
+    def targets(self) -> Optional[pd.Index]:
+        return None if self.mutations is None else self.mutations.columns
+
+    def subset(self, samples: Optional[Iterable] = None, targets: Optional[Iterable] = None) -> "Dataset":
+        expression = self.expression
+        cancer = self.cancer
+        mutations = self.mutations
+        tmb = self.tmb
+        if samples is not None:
+            index = expression.index.intersection(pd.Index(samples))
+            expression = expression.loc[index]
+            cancer = cancer.loc[index]
+            mutations = mutations.loc[index] if mutations is not None else None
+            tmb = tmb.loc[index] if tmb is not None else None
+        if targets is not None and mutations is not None:
+            mutations = mutations[list(targets)]
+        return Dataset(expression=expression, mutations=mutations, tmb=tmb, cancer=cancer)
+
+    def __repr__(self) -> str:
+        targets = 0 if self.mutations is None else self.mutations.shape[1]
+        cohorts = sorted(self.cancer.dropna().unique().tolist())
+        return (
+            f"Dataset(samples={len(self.expression)}, genes={self.expression.shape[1]}, "
+            f"targets={targets}, tmb={self.tmb is not None}, cohorts={cohorts})"
+        )
+
+
+def align_expression(
+    expression: pd.DataFrame,
+    features: list[str],
+    fill_values: np.ndarray,
+    min_overlap: float,
+) -> tuple[pd.DataFrame, float]:
+    """Reorder columns to the training features; fill missing ones with training means."""
+    if expression.columns.duplicated().any():
+        expression = expression.T.groupby(level=0, sort=False).mean().T
+    overlap_count = len(set(features).intersection(expression.columns))
+    overlap = overlap_count / max(len(features), 1)
+    if overlap < min_overlap:
+        raise ValueError(
+            f"Expression feature overlap is {overlap:.1%}; at least {min_overlap:.1%} is required. "
+            "Use the same expression quantity, transform, and gene symbols used for training."
+        )
+    aligned = expression.reindex(columns=features)
+    aligned = aligned.fillna(pd.Series(fill_values, index=features))
+    return aligned.astype(np.float32), overlap
 
 
 def normalize_cancers(values: Iterable[str] | None) -> list[str]:
@@ -58,8 +137,7 @@ class XenaTCGALoader:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.use_cache = self.data_cfg.get("use_cache", True) if use_cache is None else use_cache
 
-    def prepare(self, cancers: Iterable[str] | None = None) -> PreparedData:
-        cancers = normalize_cancers(cancers or self.data_cfg.get("cancers"))
+    def prepare(self, cancers: list[str]) -> Dataset:
         cache_path = self._cache_path(cancers)
         if self.use_cache and cache_path.exists():
             logger.info("Loading prepared data for %s from cache", ", ".join(cancers))
@@ -92,34 +170,21 @@ class XenaTCGALoader:
             "Prepared %d samples x %d genes, %d mutation targets",
             len(expression), expression.shape[1], mutations.shape[1],
         )
-        prepared = PreparedData(expression=expression, mutations=mutations, cancer=cancer)
+        prepared = Dataset(expression, mutations, cancer=cancer)
         if self.use_cache:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             joblib.dump(prepared, cache_path)
         return prepared
 
-    def prepare_tmb(self, cancers: Iterable[str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
-        cancers = normalize_cancers(cancers or self.data_cfg.get("cancers"))
+    def prepare_tmb(self, cancers: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
         logger.info("Preparing coding TMB for %d cohort(s): %s", len(cancers), ", ".join(cancers))
         annotation = self._load_annotation()
         expression_parts = []
         tmb_parts = []
         cancer_parts = []
-        coding_classes = set(self.config["tmb"]["coding_variant_classes"])
         for cancer_code in cancers:
             expression = self._load_expression(cancer_code, annotation)
-            filename = self.xena_cfg["mutation_event_file"].format(cancer=cancer_code)
-            url = self.xena_cfg["mutation_event_url_template"].format(cancer=cancer_code)
-            path = self._ensure_file(Path("mutation_events") / filename, url)
-            events = pd.read_csv(path, sep="\t", low_memory=False)
-            sample_column = "sample" if "sample" in events.columns else "Tumor_Sample_Barcode"
-            class_column = "effect" if "effect" in events.columns else "Variant_Classification"
-            if sample_column not in events.columns or class_column not in events.columns:
-                raise ValueError(f"Missing sample or mutation class columns in {path}.")
-            events = events.loc[events[class_column].isin(coding_classes), [sample_column]]
-            events["sample_id"] = events[sample_column].map(canonical_sample_id)
-            tmb = events.groupby("sample_id").size().rename("TMB").to_frame()
-            tmb["TMB_log2"] = np.log2(tmb["TMB"].astype(float) + 1.0)
+            tmb = self._load_tmb(cancer_code)
             common = expression.index.intersection(tmb.index)
             expression_parts.append(expression.loc[common])
             tmb_parts.append(tmb.loc[common])
@@ -132,6 +197,21 @@ class XenaTCGALoader:
         logger.info("Prepared coding TMB for %d samples", len(expression))
         return expression, tmb, cancer
 
+    def _load_tmb(self, cancer: str) -> pd.DataFrame:
+        filename = self.xena_cfg["mutation_event_file"].format(cancer=cancer)
+        url = self.xena_cfg["mutation_event_url_template"].format(cancer=cancer)
+        path = self._ensure_file(Path("mutation_events") / filename, url)
+        events = pd.read_csv(path, sep="\t", low_memory=False)
+        sample_column = "sample" if "sample" in events.columns else "Tumor_Sample_Barcode"
+        class_column = "effect" if "effect" in events.columns else "Variant_Classification"
+        if sample_column not in events.columns or class_column not in events.columns:
+            raise ValueError(f"Missing sample or mutation class columns in {path}.")
+        events = events.loc[events[class_column].isin(self.config["tmb"]["coding_variant_classes"]), [sample_column]]
+        events["sample_id"] = events[sample_column].map(canonical_sample_id)
+        tmb = events.groupby("sample_id").size().rename("TMB").to_frame()
+        tmb["TMB_log2"] = np.log2(tmb["TMB"].astype(float) + 1.0)
+        return tmb
+
     def _load_expression(self, cancer: str, annotation: pd.DataFrame) -> pd.DataFrame:
         dataset = self.data_cfg.get("expression_dataset", "star_counts")
         if dataset not in EXPRESSION_DATASETS:
@@ -139,10 +219,9 @@ class XenaTCGALoader:
         filename = self.xena_cfg["expression_files"][dataset].format(cancer=cancer)
         url = self.xena_cfg["expression_url_template"].format(filename=filename)
         path = self._ensure_file(Path("expression") / filename, url)
-        matrix = pd.read_csv(path, sep="\t", index_col=0).T
+        matrix = _read_numeric(path).T
         matrix.index = matrix.index.map(canonical_sample_id)
         matrix = matrix[~matrix.index.duplicated(keep="first")]
-        matrix = matrix.apply(pd.to_numeric, errors="coerce")
         matrix = self._transform_expression(matrix)
 
         base_ids = pd.Index(matrix.columns.astype(str).str.split(".").str[0], name="gene_id")
@@ -165,37 +244,28 @@ class XenaTCGALoader:
         matrix.index.name = "sample_id"
         return matrix.astype(np.float32)
 
-    def _resolved_transform(self) -> str:
-        transform = self.data_cfg.get("expression_transform", "log1p")
+    def _transform_expression(self, matrix: pd.DataFrame) -> pd.DataFrame:
+        # Xena serves STAR values as log2(x + offset): undo it, then log1p (or keep linear / keep Xena's log2).
+        transform = self.data_cfg["expression_transform"]
         if transform not in EXPRESSION_TRANSFORMS:
             raise ValueError(f"expression_transform must be one of: {', '.join(EXPRESSION_TRANSFORMS)}")
-        return transform
-
-    def _transform_expression(self, matrix: pd.DataFrame) -> pd.DataFrame:
-        # Xena serves every STAR dataset as log2(value + offset). By default we invert that
-        # back to the underlying quantity and apply natural log1p, uniformly across counts,
-        # TPM, and FPKM. `raw` skips the log (linear scale); `xena` keeps the downloaded log2
-        # untouched (no inversion, so it needs no offset). The inversion assumes `offset`
-        # matches the dataset; it is 1 for STAR counts and configurable via xena_log_offset.
-        transform = self._resolved_transform()
         if transform == "xena":
             return matrix
-        offset = float(self.data_cfg.get("xena_log_offset", 1.0))
-        counts = ((2.0 ** matrix) - offset).clip(lower=0)
+        counts = (2.0 ** matrix - float(self.data_cfg["xena_log_offset"])).clip(lower=0)
         return np.log1p(counts) if transform == "log1p" else counts
 
     def _load_mutations(self, cancer: str, annotation: pd.DataFrame) -> pd.DataFrame:
         local_name = self.xena_cfg["mutation_file"].format(cancer=cancer)
         url = self.xena_cfg["mutation_url_template"].format(cancer=cancer)
         path = self._ensure_file(Path("mutations") / local_name, url)
-        matrix = pd.read_csv(path, sep="\t", index_col=0)
+        matrix = _read_numeric(path)
         index_samples = matrix.index.astype(str).str.startswith("TCGA-").mean()
         column_samples = matrix.columns.astype(str).str.startswith("TCGA-").mean()
         if column_samples > index_samples:
             matrix = matrix.T
         matrix.index = matrix.index.map(canonical_sample_id)
         matrix = matrix[~matrix.index.duplicated(keep="first")]
-        matrix = matrix.apply(pd.to_numeric, errors="coerce").fillna(0)
+        matrix = matrix.fillna(0)
         matrix.columns = matrix.columns.astype(str)
         if self.data_cfg.get("protein_coding_mutation_targets", True):
             protein_symbols = set(annotation.loc[annotation["biotype"].eq("protein_coding"), "symbol"])
@@ -258,7 +328,7 @@ class XenaTCGALoader:
         key_data = {
             "cancers": cancers,
             "dataset": self.data_cfg.get("expression_dataset"),
-            "transform": self._resolved_transform(),
+            "transform": self.data_cfg["expression_transform"],
             "offset": self.data_cfg.get("xena_log_offset"),
             "protein": self.data_cfg.get("protein_coding_only"),
             "protein_mutations": self.data_cfg.get("protein_coding_mutation_targets"),
@@ -275,7 +345,14 @@ class XenaTCGALoader:
             "mutation_url": self.xena_cfg.get("mutation_url_template"),
         }
         digest = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-        return self.data_dir / "cache" / f"prepared_{digest}.joblib"
+        return self.data_dir / "cache" / f"dataset_{digest}.joblib"
+
+
+def _read_numeric(path: Path) -> pd.DataFrame:
+    matrix = pd.read_csv(path, sep="\t", index_col=0)
+    if not all(pd.api.types.is_numeric_dtype(dtype) for dtype in matrix.dtypes):
+        raise ValueError(f"Non-numeric values in {path}.")
+    return matrix
 
 
 def _gtf_value(attributes: str, key: str) -> str:
