@@ -5,44 +5,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from .backends import make_regressor
+from .evaluation import tmb_metrics
 from .logging_utils import logger
 from .splits import make_folds
-
-
-def metric_summary(y_true, y_pred, min_n: int = 3) -> dict:
-    truth = np.asarray(y_true, dtype=float)
-    prediction = np.asarray(y_pred, dtype=float)
-    keep = np.isfinite(truth) & np.isfinite(prediction)
-    truth, prediction = truth[keep], prediction[keep]
-    result = {
-        "n": len(truth),
-        "mae": np.nan,
-        "rmse": np.nan,
-        "spearman": np.nan,
-        "spearman_p": np.nan,
-        "pearson": np.nan,
-        "pearson_p": np.nan,
-    }
-    if not len(truth):
-        return result
-    result["mae"] = mean_absolute_error(truth, prediction)
-    result["rmse"] = np.sqrt(mean_squared_error(truth, prediction))
-    if len(truth) >= min_n and np.std(truth) > 0 and np.std(prediction) > 0:
-        spearman = spearmanr(truth, prediction)
-        pearson = pearsonr(truth, prediction)
-        result.update(
-            {
-                "spearman": spearman.statistic,
-                "spearman_p": spearman.pvalue,
-                "pearson": pearson.statistic,
-                "pearson_p": pearson.pvalue,
-            }
-        )
-    return result
 
 
 def tmb_ml_model_params(config: dict, ml_model: str | None = None):
@@ -75,7 +42,7 @@ def run_tmb_cv(expression, tmb, cancer, config, ml_model=None, params=None):
         prediction = model.predict(expression.iloc[test_index])
         out_of_fold[test_index] = prediction
         fold_ids[test_index] = fold
-        fold_rows.append({"fold": fold, **metric_summary(truth[test_index], prediction)})
+        fold_rows.append({"fold": fold, **tmb_metrics(truth[test_index], prediction)})
 
     predictions = pd.DataFrame(
         {
@@ -88,9 +55,9 @@ def run_tmb_cv(expression, tmb, cancer, config, ml_model=None, params=None):
             "TMB_pred": np.maximum(np.power(2, out_of_fold) - 1, 0),
         }
     )
-    summaries = [{"cancer": "__OVERALL__", **metric_summary(truth, out_of_fold)}]
+    summaries = [{"cancer": "__OVERALL__", **tmb_metrics(truth, out_of_fold)}]
     for cancer_code, subset in predictions.groupby("cancer"):
-        summaries.append({"cancer": cancer_code, **metric_summary(subset["TMB_log2_true"], subset["TMB_log2_pred"])})
+        summaries.append({"cancer": cancer_code, **tmb_metrics(subset["TMB_log2_true"], subset["TMB_log2_pred"])})
     summary = pd.DataFrame(summaries)
     fold_metrics = pd.DataFrame(fold_rows)
     metadata = {

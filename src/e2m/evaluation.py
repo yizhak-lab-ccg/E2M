@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     f1_score,
     matthews_corrcoef,
+    mean_absolute_error,
+    mean_squared_error,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -48,3 +51,35 @@ def evaluate_predictions(labels, predictions, probabilities, targets) -> pd.Data
             }
         )
     return pd.DataFrame(rows).set_index("target")
+
+
+def tmb_metrics(y_true, y_pred, min_n: int = 3) -> dict:
+    truth = np.asarray(y_true, dtype=float)
+    prediction = np.asarray(y_pred, dtype=float)
+    keep = np.isfinite(truth) & np.isfinite(prediction)
+    truth, prediction = truth[keep], prediction[keep]
+    result = {
+        "n": len(truth),
+        "mae": np.nan,
+        "rmse": np.nan,
+        "spearman": np.nan,
+        "spearman_p": np.nan,
+        "pearson": np.nan,
+        "pearson_p": np.nan,
+    }
+    if not len(truth):
+        return result
+    result["mae"] = mean_absolute_error(truth, prediction)
+    result["rmse"] = np.sqrt(mean_squared_error(truth, prediction))
+    if len(truth) >= min_n and np.std(truth) > 0 and np.std(prediction) > 0:
+        spearman = spearmanr(truth, prediction)
+        pearson = pearsonr(truth, prediction)
+        result.update(
+            {
+                "spearman": spearman.statistic,
+                "spearman_p": spearman.pvalue,
+                "pearson": pearson.statistic,
+                "pearson_p": pearson.pvalue,
+            }
+        )
+    return result

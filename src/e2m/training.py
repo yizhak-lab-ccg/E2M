@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from .logging_utils import logger
-from .metrics import evaluate_predictions
+from .evaluation import evaluate_predictions
 from .models import MultitaskModel
 from .splits import make_folds
 
