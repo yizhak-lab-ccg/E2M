@@ -12,7 +12,7 @@ import pandas as pd
 from .config import load_config
 from .data import align_expression
 from .models import MultitaskModel as _MultitaskNetwork
-from .training import model_settings, run_cross_validation, write_cross_validation
+from .training import cross_validate_mutations, cross_validate_tmb, model_settings, tmb_ml_model_params
 
 
 def _expression(data) -> pd.DataFrame:
@@ -147,11 +147,7 @@ class E2MModel:
             raise ValueError("cross_validate needs mutation labels (a Dataset with mutations, or mutations=).")
         if cancer is None:
             cancer = pd.Series("cohort", index=expression.index, name="cancer")
-        metrics, prob_frame, pred_frame, fold_frame, metadata = run_cross_validation(
-            expression, mutations, cancer, self.config, self.hyperparameters
-        )
-        if output is not None:
-            write_cross_validation(output, metrics, prob_frame, pred_frame, fold_frame, metadata)
+        metrics, _ = cross_validate_mutations(expression, mutations, cancer, self.config, self.hyperparameters, output)
         return metrics
 
     # ----------------------------------------------------------- persistence
@@ -216,8 +212,6 @@ class TmbModel:
         self.feature_means: Optional[np.ndarray] = None
 
     def _resolved_params(self) -> dict:
-        from .tmb import tmb_ml_model_params
-
         _, base = tmb_ml_model_params(self.config, self.ml_model)
         base.update(self.params)
         return base
@@ -249,8 +243,6 @@ class TmbModel:
 
     def cross_validate(self, data, tmb=None, cancer=None, output=None) -> pd.DataFrame:
         """Held-out TMB regression; returns the per-cancer + overall summary table."""
-        from .tmb import run_tmb_cv, write_tmb
-
         expression, labels = _expression_tmb(data, tmb)
         if labels is None:
             raise ValueError("cross_validate needs TMB labels (a Dataset with tmb, or tmb=).")
@@ -259,16 +251,15 @@ class TmbModel:
         if cancer is None:
             cancer = pd.Series("cohort", index=expression.index, name="cancer")
         index = labels.index[labels["TMB_log2"].notna()]
-        summary, predictions, fold_metrics, metadata = run_tmb_cv(
+        summary, _ = cross_validate_tmb(
             expression.loc[index],
             labels.loc[index],
             cancer.loc[index],
             self.config,
             ml_model=self.ml_model,
             params=self._resolved_params(),
+            output=output,
         )
-        if output is not None:
-            write_tmb(output, summary, predictions, fold_metrics, metadata)
         return summary
 
     def __repr__(self) -> str:

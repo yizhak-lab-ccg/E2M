@@ -41,18 +41,14 @@ def cross_validate(
     model_overrides=None,
     use_cache=True,
 ) -> dict:
-    from .training import cross_validate as run_cross_validation
+    from .training import cross_validate_mutations
 
     config, selected = _data_config(config_path, cancers, data_overrides)
     data = XenaTCGALoader(config, data_dir=data_dir, use_cache=use_cache).prepare(selected)
-    return run_cross_validation(
-        data.expression,
-        data.mutations,
-        data.cancer,
-        config,
-        output_dir,
-        model_overrides=model_overrides,
+    _, metadata = cross_validate_mutations(
+        data.expression, data.mutations, data.cancer, config, model_overrides, output_dir
     )
+    return metadata
 
 
 def train(
@@ -91,12 +87,12 @@ def predict_tmb(
     data_dir=None,
     data_overrides=None,
 ) -> dict:
-    from .tmb import run_tmb_cross_validation
+    from .training import cross_validate_tmb
 
     config, selected = _data_config(config_path, cancers, data_overrides)
     loader = XenaTCGALoader(config, data_dir=data_dir, use_cache=False)
     expression, tmb, cancer = loader.prepare_tmb(selected)
-    return run_tmb_cross_validation(expression, tmb, cancer, config, output_dir)
+    return cross_validate_tmb(expression, tmb, cancer, config, output=output_dir)[1]
 
 
 def predict(model_dir, expression_path, output_path, min_feature_overlap=None) -> dict:
