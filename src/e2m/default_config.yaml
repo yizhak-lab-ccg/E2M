@@ -83,6 +83,10 @@ model:
 
 evaluation:
   cv_folds: 5
+  # stratified by cancer type when there are several cohorts.
+  split: stratified
+  # Write each fold's model to <output>/folds/fold_<k>.
+  save_fold_models: true
 
 interpretation:
   method: "xgboost"

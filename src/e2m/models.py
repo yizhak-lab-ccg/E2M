@@ -7,6 +7,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Optional
 
+import joblib
 import numpy as np
 import pandas as pd
 import torch
@@ -285,15 +286,22 @@ class E2MModel:
         return summary
 
     # ------------------------------------------------------------ evaluate
-    def cross_validate(self, data, mutations=None, cancer=None, output=None) -> pd.DataFrame:
-        """Out-of-fold metrics for this model's settings; writes the tables to `output` if given."""
+    def cross_validate(self, data, mutations=None, cancer=None, output=None, groups=None, folds=None) -> pd.DataFrame:
+        """Pooled out-of-fold metrics; writes predictions, per-fold metrics, and fold models to `output` if given."""
         from .training import cross_validate_mutations
 
         dataset = _as_dataset(data, mutations, cancer=cancer)
         if dataset.mutations is None:
             raise ValueError("cross_validate needs mutation labels (a Dataset with mutations, or mutations=).")
         metrics, _ = cross_validate_mutations(
-            dataset.expression, dataset.mutations, dataset.cancer, self.config, self.hyperparameters, output
+            dataset.expression,
+            dataset.mutations,
+            dataset.cancer,
+            self.config,
+            self.hyperparameters,
+            output,
+            groups,
+            folds,
         )
         return metrics
 
@@ -374,6 +382,7 @@ class TmbModel:
         self.regressor = None
         self.features: Optional[list] = None
         self.feature_means: Optional[np.ndarray] = None
+        self.metadata: dict = {}
 
     def _resolved_params(self) -> dict:
         _, base = tmb_ml_model_params(self.config, self.ml_model)
@@ -390,7 +399,46 @@ class TmbModel:
         self.regressor.fit(expression.values, dataset.tmb.loc[index, "TMB_log2"].to_numpy())
         self.features = expression.columns.tolist()
         self.feature_means = expression.mean(axis=0).to_numpy(dtype=np.float32)
+        self.metadata = {
+            "n_samples": len(expression),
+            "n_features": expression.shape[1],
+            "target": "log2(coding TMB + 1)",
+            "ml_model": self.ml_model,
+            "params": self._resolved_params(),
+            "training_config": self.config,
+        }
         return self
+
+    def save(self, output_dir) -> Path:
+        """Write the regressor (XGBoost JSON or joblib), feature order, feature means, and metadata."""
+        if self.regressor is None:
+            raise ValueError("Model is not fitted. Call fit(dataset).")
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        if self.ml_model == "xgboost":
+            self.regressor.save_model(output / "model.json")
+        else:
+            joblib.dump(self.regressor, output / "model.joblib")
+        np.save(output / "feature_means.npy", self.feature_means)
+        (output / "features.json").write_text(json.dumps(self.features), encoding="utf-8")
+        (output / "model_metadata.json").write_text(json.dumps(self.metadata, indent=2), encoding="utf-8")
+        return output
+
+    @classmethod
+    def load(cls, model_dir) -> "TmbModel":
+        """Load a model written by `save`."""
+        directory = Path(model_dir)
+        metadata = json.loads((directory / "model_metadata.json").read_text(encoding="utf-8"))
+        model = cls(metadata["ml_model"], config=metadata.get("training_config"), **metadata["params"])
+        if model.ml_model == "xgboost":
+            model.regressor = make_tree_model("xgboost", "regressor", metadata["params"])
+            model.regressor.load_model(directory / "model.json")
+        else:
+            model.regressor = joblib.load(directory / "model.joblib")
+        model.features = json.loads((directory / "features.json").read_text(encoding="utf-8"))
+        model.feature_means = np.load(directory / "feature_means.npy")
+        model.metadata = metadata
+        return model
 
     def predict(self, data, min_feature_overlap=None) -> pd.DataFrame:
         """Predicted TMB_log2_pred and TMB_pred per sample."""
@@ -404,14 +452,16 @@ class TmbModel:
             index=aligned.index,
         )
 
-    def cross_validate(self, data, tmb=None, cancer=None, output=None) -> pd.DataFrame:
-        """Out-of-fold TMB regression; returns the per-cancer and overall summary."""
-        from .training import cross_validate_tmb
+    def cross_validate(self, data, tmb=None, cancer=None, output=None, groups=None, folds=None) -> pd.DataFrame:
+        """Out-of-fold TMB regression; returns the per-cancer and overall (pooled) summary."""
+        from .training import _aligned, cross_validate_tmb
 
         dataset = _as_dataset(data, tmb=tmb, cancer=cancer)
         if dataset.tmb is None:
             raise ValueError("cross_validate needs TMB labels (a Dataset with tmb, or tmb=).")
         index = dataset.tmb.index[dataset.tmb["TMB_log2"].notna()]
+        groups = _aligned(groups, dataset.samples)
+        folds = _aligned(folds, dataset.samples)
         summary, _ = cross_validate_tmb(
             dataset.expression.loc[index],
             dataset.tmb.loc[index],
@@ -420,6 +470,8 @@ class TmbModel:
             ml_model=self.ml_model,
             params=self._resolved_params(),
             output=output,
+            groups=None if groups is None else groups.loc[index],
+            folds=None if folds is None else folds.loc[index],
         )
         return summary
 
