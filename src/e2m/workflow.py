@@ -59,24 +59,13 @@ def train(
     model_overrides=None,
     use_cache=True,
 ) -> dict:
-    from .training import train_full
-
     config, selected = _data_config(config_path, cancers, data_overrides)
     loader = XenaTCGALoader(config, data_dir=data_dir, use_cache=use_cache)
     data = loader.prepare(selected)
-    metadata = {
-        "cancers": selected,
-        "data_dir": str(loader.data_dir),
-        "training_config": config,
-    }
-    return train_full(
-        data.expression,
-        data.mutations,
-        config,
-        output_dir,
-        metadata,
-        model_overrides=model_overrides,
-    )
+    model = E2MModel(config, **(model_overrides or {})).fit(data)
+    model.metadata["data_dir"] = str(loader.data_dir)
+    model.save(output_dir)
+    return model.metadata
 
 
 def predict_tmb(

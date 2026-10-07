@@ -132,9 +132,10 @@ class E2MModel:
             "n_targets": y.shape[1],
             "model": self.settings,
         }
-        # Recorded so a saved bundle knows its cohorts (the CLI's explain reloads them).
+        # Recorded so a saved bundle knows its cohorts, in loading order (the CLI's explain reloads them).
         if isinstance(data, Dataset):
-            self.metadata["cancers"] = sorted(data.cancer.dropna().unique().tolist())
+            self.metadata["cancers"] = data.cancer.dropna().unique().tolist()
+        self.metadata["training_config"] = self.config
         return self
 
     def _loader(self, x: np.ndarray, y: np.ndarray, shuffle: bool) -> DataLoader:
@@ -293,8 +294,11 @@ class E2MModel:
         return metrics
 
     # ----------------------------------------------------------- persistence
-    def save_checkpoint(self, path) -> None:
-        """Write the network weights, scaler, settings, and history to one torch file."""
+    def save(self, output_dir) -> Path:
+        """Write the model bundle: weights and scaler, feature and target order, feature means, metadata, history."""
+        self._check_fitted()
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
         scaler = None
         if self.scaler is not None:
             scaler = {
@@ -312,20 +316,13 @@ class E2MModel:
                 "scaler": scaler,
                 "history": self.history,
             },
-            Path(path),
+            output / "model.pt",
         )
-
-    def save(self, output_dir) -> Path:
-        """Write the model bundle (the layout the CLI's predict/embed read)."""
-        self._check_fitted()
-        output = Path(output_dir)
-        output.mkdir(parents=True, exist_ok=True)
-        self.save_checkpoint(output / "model.pt")
         np.save(output / "feature_means.npy", self.feature_means)
         (output / "features.json").write_text(json.dumps(self.features), encoding="utf-8")
         (output / "targets.json").write_text(json.dumps(self.targets), encoding="utf-8")
-        bundle_metadata = {**self.metadata, "training_config": self.config}
-        (output / "model_metadata.json").write_text(json.dumps(bundle_metadata, indent=2), encoding="utf-8")
+        (output / "model_metadata.json").write_text(json.dumps(self.metadata, indent=2), encoding="utf-8")
+        pd.DataFrame(self.history).to_csv(output / "training_history.csv", index=False)
         return output
 
     @classmethod
