@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from e2m.config import load_config
 from e2m.interpretation import explain_single_target
-from e2m.models import MultitaskModel
-from e2m.tmb import run_tmb_cross_validation
+from e2m.models import E2MModel
+from e2m.training import cross_validate_tmb
 
 
 def main() -> None:
@@ -33,30 +33,15 @@ def main() -> None:
     signal = expression["GENE_0"] - 0.5 * expression["GENE_1"]
     labels = (signal > signal.median()).astype(int).rename("TP53")
 
-    model = MultitaskModel(
-        input_size=8,
-        output_size=1,
-        hidden_layers=[12, 6],
-        dropout_rate=0.0,
-        epochs=3,
-        batch_size=16,
-        patience=2,
-        random_state=21,
-    )
-    model.fit_full(expression.values, labels.to_numpy()[:, None])
-    predicted, probabilities = model.predict(expression.values)
-    embeddings = model.embeddings(expression.values)
-    weights = model.head_weights()
-    assert predicted.shape == (48, 1)
+    model = E2MModel(hidden_layers=[12, 6], dropout_rate=0.0, epochs=3, batch_size=16, patience=2, random_state=21)
+    model.fit(expression, labels.to_frame())
+    probabilities = model.predict(expression)
     assert probabilities.shape == (48, 1)
-    assert embeddings.shape == (48, 6)
-    assert weights.shape == (1, 6)
+    assert model.embed(expression).shape == (48, 6)
+    assert model.head_weights().shape == (1, 6)
 
-    checkpoint = root / "model.pt"
-    model.save(checkpoint)
-    restored = MultitaskModel.load(checkpoint)
-    _, restored_probabilities = restored.predict(expression.values)
-    np.testing.assert_allclose(probabilities, restored_probabilities, rtol=1e-6, atol=1e-6)
+    restored = E2MModel.load(model.save(root / "model"))
+    np.testing.assert_allclose(probabilities, restored.predict(expression), rtol=1e-6, atol=1e-6)
 
     config = load_config()
     config["interpretation"].update(
@@ -70,14 +55,14 @@ def main() -> None:
     config["model"]["xgboost"].update({"n_estimators": 4, "max_depth": 2, "n_jobs": 1})
     for method in ("xgboost", "neural"):
         output = root / f"shap_{method}"
-        metadata = explain_single_target(
+        _, metadata = explain_single_target(
             model=model,
             expression=expression,
             labels=labels,
             target="TP53",
             target_index=0,
             method=method,
-            output_dir=output,
+            output=output,
             config=config,
         )
         assert metadata["n_explained_samples"] == 12
@@ -88,7 +73,7 @@ def main() -> None:
     tmb = pd.DataFrame({"TMB": raw_tmb, "TMB_log2": np.log2(raw_tmb + 1)}, index=samples)
     cancer = pd.Series(["LUAD"] * len(samples), index=samples)
     config["evaluation"]["cv_folds"] = 3
-    tmb_metadata = run_tmb_cross_validation(expression, tmb, cancer, config, root / "tmb")
+    _, tmb_metadata = cross_validate_tmb(expression, tmb, cancer, config, output=root / "tmb")
     assert tmb_metadata["n_samples"] == 48
     assert len(pd.read_csv(root / "tmb/oof_predictions.csv")) == 48
 

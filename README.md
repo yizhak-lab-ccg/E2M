@@ -115,8 +115,7 @@ tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spe
 [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) works through this on TCGA-LUAD,
 step by step. `examples/external_transfer.ipynb` trains on TCGA-LUAD, predicts on the
 GSE31210 external cohort, and scores EGFR and KRAS against the alteration status that
-cohort reports. The stateless functional API (`e2m.cross_validate`, `e2m.train`, ...) used
-by the CLI is also importable.
+cohort reports.
 
 `e2m.options()` returns the accepted expression datasets, transforms, TMB models, SHAP
 methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equivalent is
@@ -239,21 +238,13 @@ Prediction requires at least 80 percent feature overlap by default. Missing trai
 
 ```text
 src/e2m/
-  dataset.py        # Dataset object (aligned expression / mutations / TMB)
-  model.py          # E2MModel and TmbModel objects
-  backends.py       # tree ML models (regressor for TMB, classifier for SHAP)
-  options.py        # options() / format_options(): accepted choices
-  logging_utils.py  # set_verbose(): opt-in progress logging
-  workflow.py       # stateless functional API used by the CLI
+  data.py           # Dataset, TCGA loading, feature alignment
+  training.py       # cross-validation for mutations and TMB
+  models.py         # E2MModel (multitask network), TmbModel, tree models
+  evaluation.py     # classification and TMB metrics
+  interpretation.py # SHAP
+  config.py         # config loading, options(), set_verbose()
   cli.py
-  config.py
-  data.py
-  interpretation.py
-  metrics.py
-  models.py         # low-level multitask network
-  splits.py
-  tmb.py
-  training.py
   default_config.yaml
 examples/
 tests/

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -13,8 +12,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from e2m.models import MultitaskModel
-from e2m.workflow import embed, head_weights, predict
+from e2m.models import E2MModel
 
 
 def main() -> None:
@@ -28,27 +26,14 @@ def main() -> None:
     configured_root = os.environ.get("E2M_RUNTIME_DIR")
     root = Path(configured_root) if configured_root else Path(tempfile.mkdtemp(prefix="e2m_example_"))
     root.mkdir(parents=True, exist_ok=True)
-    model_dir = root / "model"
-    model_dir.mkdir()
-    model = MultitaskModel(30, 3, hidden_layers=[16, 8], epochs=3, batch_size=16)
-    model.fit_full(expression.values, mutations.values)
-    model.save(model_dir / "model.pt")
-    (model_dir / "features.json").write_text(json.dumps(features), encoding="utf-8")
-    (model_dir / "targets.json").write_text(json.dumps(targets), encoding="utf-8")
-    np.save(model_dir / "feature_means.npy", expression.mean(axis=0).to_numpy(dtype=np.float32))
-    metadata = {
-        "cancers": ["SYNTHETIC"],
-        "training_config": {"data": {"min_feature_overlap": 0.8}},
-    }
-    (model_dir / "model_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    model_dir = E2MModel(hidden_layers=[16, 8], epochs=3, batch_size=16).fit(expression, mutations).save(root / "model")
 
-    new_expression = expression.iloc[:5].copy()
-    expression_path = root / "expression.csv"
-    new_expression.to_csv(expression_path)
-    print(predict(model_dir, expression_path, root / "probabilities.csv"))
-    print(embed(model_dir, expression_path, root / "embeddings.csv"))
-    print(head_weights(model_dir, root / "head_weights.csv"))
-    print(f"Outputs: {root}")
+    model = E2MModel.load(model_dir)
+    new_expression = expression.iloc[:5]
+    print(model.predict(new_expression))
+    print(model.embed(new_expression))
+    print(model.head_weights())
+    print(f"Model bundle: {model_dir}")
 
 
 if __name__ == "__main__":
