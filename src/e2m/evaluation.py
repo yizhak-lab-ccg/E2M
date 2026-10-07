@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
@@ -23,31 +25,48 @@ def normalized_auprc(auprc: float, prevalence: float) -> float:
 
 
 def evaluate_predictions(labels, predictions, probabilities, targets) -> pd.DataFrame:
-    y_true = np.asarray(labels)
+    """Per-target classification metrics; a NaN label means "not profiled" and that sample is skipped for that target."""
+    y_true = np.asarray(labels, dtype=float)
     y_pred = np.asarray(predictions)
     y_prob = np.asarray(probabilities)
+    profiled_mask = ~np.isnan(y_true)
+    if not profiled_mask.all():
+        warnings.warn(
+            f"{int((~profiled_mask).sum())} mutation labels are missing (not profiled) across "
+            f"{int((~profiled_mask).any(axis=0).sum())} targets; metrics use profiled samples only.",
+            stacklevel=2,
+        )
     rows = []
     for index, target in enumerate(targets):
-        truth = y_true[:, index]
-        predicted = y_pred[:, index]
-        probability = y_prob[:, index]
-        prevalence = float(truth.mean())
-        auprc = float(average_precision_score(truth, probability)) if len(np.unique(truth)) > 1 else np.nan
-        roc_auc = float(roc_auc_score(truth, probability)) if len(np.unique(truth)) > 1 else np.nan
+        profiled = profiled_mask[:, index]
+        truth = y_true[profiled, index].astype(int)
+        predicted = y_pred[profiled, index]
+        probability = y_prob[profiled, index]
+        n_positive = int(truth.sum())
+        n_negative = len(truth) - n_positive
+        evaluable = n_positive > 0 and n_negative > 0
+        prevalence = float(truth.mean()) if len(truth) else np.nan
+        auprc = float(average_precision_score(truth, probability)) if evaluable else np.nan
+        roc_auc = float(roc_auc_score(truth, probability)) if evaluable else np.nan
+        true_negative = int(((truth == 0) & (predicted == 0)).sum())
         rows.append(
             {
                 "target": target,
                 "n_samples": len(truth),
-                "n_positive": int(truth.sum()),
+                "n_positive": n_positive,
+                "n_negative": n_negative,
+                "n_not_profiled": int((~profiled).sum()),
+                "evaluable": evaluable,
                 "prevalence": prevalence,
                 "auprc": auprc,
                 "normalized_auprc": normalized_auprc(auprc, prevalence),
                 "roc_auc": roc_auc,
-                "accuracy": accuracy_score(truth, predicted),
-                "precision": precision_score(truth, predicted, zero_division=0),
-                "recall": recall_score(truth, predicted, zero_division=0),
-                "f1": f1_score(truth, predicted, zero_division=0),
-                "mcc": matthews_corrcoef(truth, predicted),
+                "accuracy": accuracy_score(truth, predicted) if len(truth) else np.nan,
+                "precision": precision_score(truth, predicted, zero_division=0) if len(truth) else np.nan,
+                "recall": recall_score(truth, predicted, zero_division=0) if len(truth) else np.nan,
+                "specificity": true_negative / n_negative if n_negative else np.nan,
+                "f1": f1_score(truth, predicted, zero_division=0) if len(truth) else np.nan,
+                "mcc": matthews_corrcoef(truth, predicted) if len(truth) else np.nan,
             }
         )
     return pd.DataFrame(rows).set_index("target")

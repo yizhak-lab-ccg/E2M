@@ -108,6 +108,12 @@ class E2MModel:
         dataset = _as_dataset(data, mutations)
         if dataset.mutations is None:
             raise ValueError("E2MModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
+        missing = int(dataset.mutations.isna().to_numpy().sum())
+        if missing:
+            raise ValueError(
+                f"{missing} mutation labels are missing (not profiled) in "
+                f"{int(dataset.mutations.isna().any().sum())} targets; training needs complete labels."
+            )
         x = _float_array(dataset.expression)
         y = _float_array(dataset.mutations)
         if self.settings["standardize_inputs"]:
