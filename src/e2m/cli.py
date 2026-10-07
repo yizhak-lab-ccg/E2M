@@ -53,8 +53,7 @@ def _model_arguments(parser):
     parser.add_argument(
         "--patience",
         type=int,
-        help="Early-stopping patience for the internal validation split used in `cv`. "
-        "Full-cohort `train` runs the fixed epoch count and does not early-stop.",
+        help="Early-stopping patience on the internal validation split (CV folds and `train`).",
     )
 
 

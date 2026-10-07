@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from importlib import import_module
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,9 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from .config import load_config
 from .data import Dataset, align_expression
+
+# Deterministic cuBLAS needs this before CUDA starts; an existing value is kept.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 TREE_MODELS = ("xgboost", "lightgbm", "random_forest", "gradient_boosting")
 _TREE_CLASSES = {
@@ -98,8 +102,8 @@ class E2MModel:
         self.metadata: dict = {}
 
     # ------------------------------------------------------------------ fit
-    def fit(self, data, mutations=None, early_stopping: bool = False) -> "E2MModel":
-        """Train on all samples, or with early stopping on an internal validation split."""
+    def fit(self, data, mutations=None) -> "E2MModel":
+        """Train; with `early_stopping` (default) a validation split picks the best epoch."""
         dataset = _as_dataset(data, mutations)
         if dataset.mutations is None:
             raise ValueError("E2MModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
@@ -108,7 +112,7 @@ class E2MModel:
         if self.settings["standardize_inputs"]:
             self.scaler = StandardScaler()
             x = self.scaler.fit_transform(x).astype(np.float32)
-        if early_stopping:
+        if self.settings.get("early_stopping", True):
             train_idx, validation_idx = train_test_split(
                 np.arange(len(x)),
                 test_size=self.settings["validation_split"],
@@ -131,6 +135,7 @@ class E2MModel:
             "n_features": x.shape[1],
             "n_targets": y.shape[1],
             "model": self.settings,
+            "device": str(self.device),
         }
         # Recorded so a saved bundle knows its cohorts, in loading order (the CLI's explain reloads them).
         if isinstance(data, Dataset):
@@ -152,6 +157,7 @@ class E2MModel:
 
     def _train(self, train_loader: DataLoader, train_labels: np.ndarray, validation_loader: DataLoader | None):
         settings = self.settings
+        torch.use_deterministic_algorithms(bool(settings.get("deterministic", True)))
         torch.manual_seed(settings["random_state"])
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(settings["random_state"])

@@ -47,6 +47,7 @@ def explain_single_target(
             target_index,
             settings,
             rng,
+            random_state,
         )
     else:
         raise ValueError(
@@ -157,7 +158,7 @@ def _explain_tree(expression, labels, explained_expression, ml_model, settings):
     return explainer.shap_values(explained_expression.values), f"{ml_model}_tree_shap"
 
 
-def _explain_neural(model, expression, explained_expression, target_index, settings, rng):
+def _explain_neural(model, expression, explained_expression, target_index, settings, rng, random_state):
     shap = _require_shap()
     import torch
     import torch.nn as nn
@@ -181,12 +182,12 @@ def _explain_neural(model, expression, explained_expression, target_index, setti
     explained = torch.from_numpy(transformed_explained).to(model.device)
     explainer_name = str(settings.get("neural_explainer", "gradient")).lower()
     if explainer_name == "deep":
-        explainer = shap.DeepExplainer(wrapper, background)
-    elif explainer_name == "gradient":
+        return shap.DeepExplainer(wrapper, background).shap_values(explained), "mutation_probability"
+    if explainer_name == "gradient":
+        # GradientExplainer samples background rows and noise; seed it so reruns match.
         explainer = shap.GradientExplainer(wrapper, background)
-    else:
-        raise ValueError("neural_explainer must be gradient or deep.")
-    return explainer.shap_values(explained), "mutation_probability"
+        return explainer.shap_values(explained, rseed=random_state), "mutation_probability"
+    raise ValueError("neural_explainer must be gradient or deep.")
 
 
 def _two_dimensional(values) -> np.ndarray:

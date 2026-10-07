@@ -53,6 +53,10 @@ model:
     epochs: 100
     patience: 6
     validation_split: 0.15
+    # Early stopping on the validation split.
+    early_stopping: true
+    # torch.use_deterministic_algorithms; GPU and CPU still differ from each other.
+    deterministic: true
     gradient_clip: 1.0
     use_pos_weight: true
   xgboost:

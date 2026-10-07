@@ -94,7 +94,6 @@ def cross_validate_mutations(
         model.fit(
             expression.iloc[train_idx],
             mutations.iloc[train_idx],
-            early_stopping=True,
         )
         return model.predict(expression.iloc[test_idx]).to_numpy()
 
