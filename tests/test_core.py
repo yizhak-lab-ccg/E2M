@@ -10,7 +10,7 @@ import pytest
 
 from e2m.cli import build_parser
 from e2m.config import load_config
-from e2m.data import XenaTCGALoader, align_expression, canonical_sample_id
+from e2m.data import XenaTCGALoader, align_expression, sample_id
 from e2m.evaluation import normalized_auprc
 
 
@@ -40,31 +40,32 @@ def test_xena_transforms_are_explicit(tmp_path):
 
     # The default (log1p) recovers the underlying quantity and log-transforms it.
     default_loader = XenaTCGALoader(load_config(), data_dir=tmp_path)
-    defaulted = default_loader._transform_expression(downloaded)
+    defaulted = np.log1p(default_loader._linear(downloaded))
     assert defaulted.iloc[0].tolist() == pytest.approx(np.log1p([0.0, 3.0]).tolist())
 
     # A custom offset changes the inversion (log2(x + 0.5) here).
     offset_config = load_config()
     offset_config["data"]["xena_log_offset"] = 0.5
-    offset = XenaTCGALoader(offset_config, data_dir=tmp_path)._transform_expression(downloaded)
+    offset = np.log1p(XenaTCGALoader(offset_config, data_dir=tmp_path)._linear(downloaded))
     assert offset.iloc[0].tolist() == pytest.approx(np.log1p([0.5, 3.5]).tolist())
 
     # raw opts out of the log transform and returns linear counts.
     raw_config = load_config()
     raw_config["data"]["expression_transform"] = "raw"
-    raw = XenaTCGALoader(raw_config, data_dir=tmp_path)._transform_expression(downloaded)
+    raw = XenaTCGALoader(raw_config, data_dir=tmp_path)._linear(downloaded)
     assert raw.iloc[0].tolist() == pytest.approx([0.0, 3.0])
 
     # xena keeps the downloaded log2 values unchanged.
     xena_config = load_config()
     xena_config["data"]["expression_transform"] = "xena"
-    kept = XenaTCGALoader(xena_config, data_dir=tmp_path)._transform_expression(downloaded)
+    kept = XenaTCGALoader(xena_config, data_dir=tmp_path)._linear(downloaded)
     assert kept.equals(downloaded)
 
 
 def test_sample_ids_match_expression_and_mc3_forms():
-    assert canonical_sample_id("TCGA-AB-1234-01") == "TCGA-AB-1234-01A"
-    assert canonical_sample_id("TCGA-AB-1234-01A-01R") == "TCGA-AB-1234-01A"
+    assert sample_id("TCGA-AB-1234-01", vial=True) == "TCGA-AB-1234-01A"
+    assert sample_id("TCGA-AB-1234-01A-01R", vial=True) == "TCGA-AB-1234-01A"
+    assert sample_id("TCGA-AB-1234-01B-01R") == "TCGA-AB-1234-01"
 
 
 def test_local_xena_loader_maps_collapses_and_aligns(tmp_path):
@@ -107,7 +108,7 @@ def test_local_xena_loader_maps_collapses_and_aligns(tmp_path):
     prepared = XenaTCGALoader(config, data_dir=tmp_path, use_cache=False).prepare(["LUAD"])
     assert prepared.expression.shape == (2, 1)
     assert prepared.expression.columns.tolist() == ["A"]
-    assert prepared.expression.loc[sample_a, "A"] == pytest.approx(2.0)
+    assert prepared.expression.loc[sample_a, "A"] == pytest.approx(4.0)  # counts 1 + 3, summed
     assert set(prepared.mutations.columns) == {"TP53", "KRAS"}
 
 

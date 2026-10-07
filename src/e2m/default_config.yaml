@@ -4,11 +4,14 @@ data:
   expression_dataset: "star_counts"
   expression_transform: "log1p"
   xena_log_offset: 1.0
+  normalization: "none"  # none | cpm
   protein_coding_only: true
   protein_coding_mutation_targets: true
-  collapse_duplicate_symbols: "mean"
+  collapse_duplicate_symbols: "sum"  # sum | mean | first
   min_mutation_prevalence: 0.05
+  min_mutation_positives: 0
   max_mutation_targets: 400
+  targets: null  # a fixed target list replaces the prevalence rules
   download_missing: true
   use_cache: true
   min_feature_overlap: 0.80
@@ -53,9 +56,7 @@ model:
     epochs: 100
     patience: 6
     validation_split: 0.15
-    # Early stopping on the validation split.
     early_stopping: true
-    # torch.use_deterministic_algorithms; GPU and CPU still differ from each other.
     deterministic: true
     gradient_clip: 1.0
     use_pos_weight: true
@@ -64,9 +65,7 @@ model:
     learning_rate: 0.1
     random_state: 42
     n_jobs: -1
-  # TMB regression ML model: xgboost | lightgbm | random_forest | gradient_boosting.
-  # Each model reads its own parameter block below (xgboost reuses the block above).
-  tmb_ml_model: "xgboost"
+  tmb_ml_model: "xgboost"  # xgboost | lightgbm | random_forest | gradient_boosting
   lightgbm:
     n_estimators: 300
     learning_rate: 0.1
@@ -83,9 +82,7 @@ model:
 
 evaluation:
   cv_folds: 5
-  # stratified by cancer type when there are several cohorts.
-  split: stratified
-  # Write each fold's model to <output>/folds/fold_<k>.
+  split: stratified  # stratified | kfold | grouped
   save_fold_models: true
 
 interpretation:

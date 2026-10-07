@@ -38,7 +38,9 @@ def _data_arguments(parser, require_cancer=True, include_mutation_targets=True, 
     )
     if include_mutation_targets:
         parser.add_argument("--min-prevalence", type=float)
+        parser.add_argument("--min-positives", type=int, help="Minimum mutated samples per target (default: 0, off).")
         parser.add_argument("--max-targets", type=int)
+        parser.add_argument("--targets", help="Comma-separated fixed target list; replaces the prevalence rules.")
     if include_cache:
         parser.add_argument("--no-cache", action="store_true")
 
@@ -131,8 +133,12 @@ def _data_overrides(args) -> dict:
         values["xena_log_offset"] = args.log_offset
     if getattr(args, "min_prevalence", None) is not None:
         values["min_mutation_prevalence"] = args.min_prevalence
+    if getattr(args, "min_positives", None) is not None:
+        values["min_mutation_positives"] = args.min_positives
     if getattr(args, "max_targets", None) is not None:
         values["max_mutation_targets"] = args.max_targets
+    if getattr(args, "targets", None):
+        values["targets"] = [target.strip() for target in args.targets.split(",") if target.strip()]
     if getattr(args, "protein_coding", None) is not None:
         values["protein_coding_only"] = args.protein_coding
         values["protein_coding_mutation_targets"] = args.protein_coding
@@ -181,6 +187,7 @@ def _download(args) -> dict:
         data.expression.to_csv(output / "expression.csv.gz", compression="gzip")
         data.mutations.to_csv(output / "mutations.csv.gz", compression="gzip")
         data.cancer.rename("cancer").to_csv(output / "samples.csv")
+        _write_manifest(data, output)
         summary["output_dir"] = str(output)
     return summary
 
@@ -188,16 +195,20 @@ def _download(args) -> dict:
 def _cv(args) -> dict:
     config, cancers, loader = _tcga(args, not args.no_cache)
     data = loader.prepare(cancers)
-    return cross_validate_mutations(
+    metadata = cross_validate_mutations(
         data.expression, data.mutations, data.cancer, config, _model_overrides(args), args.output
     )[1]
+    _write_manifest(data, args.output)
+    return metadata
 
 
 def _train(args) -> dict:
     config, cancers, loader = _tcga(args, not args.no_cache)
-    model = E2MModel(config, **_model_overrides(args)).fit(loader.prepare(cancers))
+    data = loader.prepare(cancers)
+    model = E2MModel(config, **_model_overrides(args)).fit(data)
     model.metadata["data_dir"] = str(loader.data_dir)
     model.save(args.output)
+    _write_manifest(data, args.output)
     return model.metadata
 
 
@@ -275,6 +286,11 @@ def _write_frame(frame: pd.DataFrame, path) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(destination)
+
+
+def _write_manifest(data, output) -> None:
+    Path(output).mkdir(parents=True, exist_ok=True)
+    (Path(output) / "preprocessing_manifest.json").write_text(json.dumps(data.manifest, indent=2), encoding="utf-8")
 
 
 def _overlap(model: E2MModel, expression: pd.DataFrame) -> float:
