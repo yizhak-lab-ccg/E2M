@@ -13,8 +13,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from .config import load_config
-from .logging_utils import logger
+from .config import load_config, logger
 
 
 EXPRESSION_DATASETS = ("star_counts", "star_tpm", "star_fpkm", "star_fpkm_uq")

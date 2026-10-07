@@ -8,7 +8,7 @@ import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
 
 from .evaluation import evaluate_predictions, tmb_metrics
-from .logging_utils import logger
+from .config import logger
 from .models import E2MModel, make_tree_model, model_settings, tmb_ml_model_params
 
 

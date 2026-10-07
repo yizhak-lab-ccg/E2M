@@ -6,8 +6,7 @@ import json
 from . import workflow
 from .models import TREE_MODELS
 from .data import EXPRESSION_DATASETS, EXPRESSION_TRANSFORMS
-from .logging_utils import set_verbose
-from .options import format_options
+from .config import format_options, set_verbose
 
 
 def _data_arguments(parser, require_cancer=True, include_mutation_targets=True, include_cache=True):
