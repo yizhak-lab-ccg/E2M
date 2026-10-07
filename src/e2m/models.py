@@ -264,7 +264,7 @@ class E2MModel:
     def explain(self, data, target, method="xgboost", output=None, min_feature_overlap=1.0) -> pd.DataFrame:
         """SHAP feature summary for one target on in-memory `data` (needs its mutation labels)."""
         self._check_fitted()
-        from .interpretation import run_single_target_explanation, write_explanation
+        from .interpretation import explain_single_target
 
         if self.targets is None or target not in self.targets:
             raise ValueError(f"Target {target!r} is not in this model's targets.")
@@ -273,11 +273,9 @@ class E2MModel:
             raise ValueError(f"explain needs mutation labels for {target!r} (pass a Dataset with mutations).")
         aligned = self._align(data, min_feature_overlap)
         labels = mutations[target].reindex(aligned.index)
-        summary, sample_values, metadata = run_single_target_explanation(
-            self, aligned, labels, target, self.targets.index(target), method, self.config
+        summary, _ = explain_single_target(
+            self, aligned, labels, target, self.targets.index(target), method, self.config, output
         )
-        if output is not None:
-            write_explanation(output, summary, sample_values, metadata)
         return summary
 
     # ------------------------------------------------------------ evaluate

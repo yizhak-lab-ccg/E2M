@@ -154,9 +154,9 @@ def explain(
         target,
         targets.index(target),
         method,
-        output_dir,
         config,
-    )
+        output_dir,
+    )[1]
 
 
 def _data_config(config_path, cancers, data_overrides) -> tuple[dict[str, Any], list[str]]:

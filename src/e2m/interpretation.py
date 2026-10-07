@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-def run_single_target_explanation(
+def explain_single_target(
     model,
     expression: pd.DataFrame,
     labels: pd.Series,
@@ -15,12 +15,9 @@ def run_single_target_explanation(
     target_index: int,
     method: str,
     config: dict,
+    output=None,
 ):
-    """Compute SHAP for one target in memory.
-
-    Returns ``(summary, sample_values, metadata)`` and writes nothing; callers decide
-    what to keep or persist (see :func:`write_explanation`).
-    """
+    """SHAP for one target: returns (feature summary, metadata); writes the tables to `output` if given."""
     settings = config["interpretation"]
     random_state = int(config["preprocessing"].get("random_state", 42))
     rng = np.random.default_rng(random_state)
@@ -35,13 +32,12 @@ def run_single_target_explanation(
 
     method = method.lower()
     if method in TREE_MODELS:
-        section = "xgboost" if method == "xgboost" else method
         shap_values, output_scale = _explain_tree(
             expression,
             labels,
             explained_expression,
             method,
-            config["model"].get(section, {}),
+            config["model"].get(method, {}),
         )
     elif method == "neural":
         shap_values, output_scale = _explain_neural(
@@ -104,35 +100,13 @@ def run_single_target_explanation(
         "n_features": expression.shape[1],
         "top_features_saved_per_sample": top_n,
     }
-    return summary, sample_values, metadata
-
-
-def write_explanation(output_dir, summary, sample_values, metadata) -> Path:
-    """Write the three SHAP outputs produced by :func:`run_single_target_explanation`."""
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    summary.to_csv(output / "feature_summary.csv", index=False)
-    sample_values.to_csv(output / "sample_shap_top_features.csv.gz", index=False, compression="gzip")
-    (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return output
-
-
-def explain_single_target(
-    model,
-    expression: pd.DataFrame,
-    labels: pd.Series,
-    target: str,
-    target_index: int,
-    method: str,
-    output_dir: str | Path,
-    config: dict,
-) -> dict:
-    """Functional entry point used by the CLI: compute SHAP, write files, return metadata."""
-    summary, sample_values, metadata = run_single_target_explanation(
-        model, expression, labels, target, target_index, method, config
-    )
-    write_explanation(output_dir, summary, sample_values, metadata)
-    return metadata
+    if output is not None:
+        output = Path(output)
+        output.mkdir(parents=True, exist_ok=True)
+        summary.to_csv(output / "feature_summary.csv", index=False)
+        sample_values.to_csv(output / "sample_shap_top_features.csv.gz", index=False, compression="gzip")
+        (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return summary, metadata
 
 
 def _require_shap():
@@ -145,16 +119,7 @@ def _require_shap():
 
 
 def _explain_tree(expression, labels, explained_expression, ml_model, settings):
-    """Train a tree classifier for one target and explain it with Tree SHAP.
-
-    ``ml_model`` is one of :data:`e2m.models.TREE_MODELS`. Class imbalance is handled
-    per model: ``scale_pos_weight`` for the boosting models, ``class_weight`` for the
-    random forest, and balanced per-sample weights for scikit-learn gradient boosting.
-
-    XGBoost is explained with its own native ``pred_contribs`` (the exact Tree SHAP that
-    ``shap`` delegates to for XGBoost), which needs no ``shap`` install and is robust across
-    XGBoost serialization versions. The other models use ``shap.TreeExplainer``.
-    """
+    """Fit a class-weighted tree classifier for one target and explain it with Tree SHAP."""
     from .models import make_tree_model
 
     y = labels.astype(int).to_numpy()
