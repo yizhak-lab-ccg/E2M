@@ -1,0 +1,45 @@
+# Exact versions for the GPU container (Linux, Python 3.10, CUDA 12.6); used by the Dockerfile.
+# torch pins its own NVIDIA CUDA libraries. The image records everything installed in /opt/e2m/installed.txt.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.13.0+cu126
+xgboost==3.2.0
+lightgbm==4.7.0
+shap==0.49.1
+numpy==2.2.6
+pandas==2.3.3
+scipy==1.15.3
+scikit-learn==1.7.2
+joblib==1.5.3
+pyyaml==6.0.3
+requests==2.34.2
+certifi==2026.7.22
+charset-normalizer==3.5.2
+cloudpickle==3.1.2
+exceptiongroup==1.3.1
+filelock==4.0.12
+fsspec==2026.9.0
+idna==3.20
+iniconfig==2.3.1
+jinja2==3.1.6
+llvmlite==0.50.0
+markupsafe==3.0.4
+mpmath==1.3.0
+narwhals==2.26.0
+networkx==3.4.2
+numba==0.68.0
+packaging==26.3
+pluggy==1.6.0
+pygments==2.21.0
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+pytz==2026.5
+setuptools==84.0.0
+six==1.17.0
+slicer==0.0.8
+sympy==1.14.0
+threadpoolctl==3.7.0
+tomli==2.4.1
+tqdm==4.70.1
+typing_extensions==4.16.0
+tzdata==2026.5
+urllib3==2.8.0

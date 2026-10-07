@@ -26,146 +26,71 @@ def make_splits(cancer: pd.Series, config: dict, groups=None, folds=None):
         labels = np.asarray(folds)
         if pd.isna(labels).any():
             raise ValueError("folds= must assign every sample to a fold.")
-        splits = [
-            (np.flatnonzero(labels != label), np.flatnonzero(labels == label))
-            for label in np.unique(labels)
-        ]
+        splits = [(np.flatnonzero(labels != label), np.flatnonzero(labels == label)) for label in np.unique(labels)]
         return splits, "predefined"
 
     n_splits = int(config["evaluation"].get("cv_folds", 5))
     random_state = int(config["preprocessing"].get("random_state", 42))
     split = config["evaluation"].get("split", "stratified")
     index = np.arange(len(cancer))
-
     if len(cancer) < n_splits:
-        raise ValueError(
-            f"Cannot run {n_splits} folds with only {len(cancer)} samples."
-        )
+        raise ValueError(f"Cannot run {n_splits} folds with only {len(cancer)} samples.")
 
     if split == "grouped":
         if groups is None:
             raise ValueError('split "grouped" needs groups= (one group label per sample).')
-        splitter = GroupKFold(
-            n_splits=n_splits,
-            shuffle=True,
-            random_state=random_state,
-        )
+        splitter = GroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         return list(splitter.split(index, groups=np.asarray(groups))), "grouped"
-
     if split not in ("stratified", "kfold"):
         raise ValueError("evaluation.split must be stratified, kfold, or grouped.")
-
-    stratify = (
-        split == "stratified"
-        and cancer.nunique() > 1
-        and cancer.value_counts().min() >= n_splits
-    )
-
-    if stratify:
-        splitter = StratifiedKFold(
-            n_splits=n_splits,
-            shuffle=True,
-            random_state=random_state,
-        )
+    if split == "stratified" and cancer.nunique() > 1 and cancer.value_counts().min() >= n_splits:
+        splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         return list(splitter.split(index, cancer)), "stratified_by_cancer"
-
-    splitter = KFold(
-        n_splits=n_splits,
-        shuffle=True,
-        random_state=random_state,
-    )
+    splitter = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
     return list(splitter.split(index)), "shuffled_kfold"
 
 
 def cross_validate(cancer: pd.Series, config: dict, fit_predict, dtype, groups=None, folds=None):
     """Run fit_predict(fold, train_idx, test_idx) per fold; return out-of-fold predictions, fold IDs, split method."""
     splits, split_method = make_splits(cancer, config, groups, folds)
-
     out_of_fold = None
     fold_ids = np.zeros(len(cancer), dtype=np.int16)
-
     for fold, (train_idx, test_idx) in enumerate(splits, start=1):
-        logger.info(
-            "  fold %d/%d: train %d, evaluate %d",
-            fold,
-            len(splits),
-            len(train_idx),
-            len(test_idx),
-        )
-
+        logger.info("  fold %d/%d: train %d, evaluate %d", fold, len(splits), len(train_idx), len(test_idx))
         prediction = fit_predict(fold, train_idx, test_idx)
-
         if out_of_fold is None:
-            out_of_fold = np.full(
-                (len(cancer), *np.shape(prediction)[1:]),
-                np.nan,
-                dtype=dtype,
-            )
-
+            out_of_fold = np.full((len(cancer), *np.shape(prediction)[1:]), np.nan, dtype=dtype)
         out_of_fold[test_idx] = prediction
         fold_ids[test_idx] = fold
-
     return out_of_fold, fold_ids, split_method
 
 
-def cross_validate_mutations(
-    expression,
-    mutations,
-    cancer,
-    config,
-    model_overrides=None,
-    output=None,
-    groups=None,
-    folds=None,
-):
+def cross_validate_mutations(expression, mutations, cancer, config, model_overrides=None, output=None, groups=None, folds=None):
     """Out-of-fold multitask mutation prediction; `groups`/`folds` give each sample's group or fold."""
     started = time.perf_counter()
     cancer = cancer.reindex(expression.index)
     settings = model_settings(config, model_overrides)
     fold_dir = _fold_dir(output, config)
-
-    logger.info(
-        "Mutation cross-validation: %d samples, %d targets",
-        len(expression),
-        mutations.shape[1],
-    )
+    logger.info("Mutation cross-validation: %d samples, %d targets", len(expression), mutations.shape[1])
 
     def fit_predict(fold, train_idx, test_idx):
         model = E2MModel(config, **(model_overrides or {}))
-        model.fit(
-            expression.iloc[train_idx],
-            mutations.iloc[train_idx],
-        )
+        model.fit(expression.iloc[train_idx], mutations.iloc[train_idx])
         if fold_dir is not None:
             model.save(fold_dir / f"fold_{fold}")
         return model.predict(expression.iloc[test_idx]).to_numpy()
 
     probabilities, fold_ids, split_method = cross_validate(
-        cancer,
-        config,
-        fit_predict,
-        np.float32,
-        _aligned(groups, expression.index),
-        _aligned(folds, expression.index),
+        cancer, config, fit_predict, np.float32, _aligned(groups, expression.index), _aligned(folds, expression.index)
     )
-
     predictions = (probabilities >= 0.5).astype(np.int8)
-
-    metrics = evaluate_predictions(
-        mutations.values,
-        predictions,
-        probabilities,
-        mutations.columns,
-    )
+    metrics = evaluate_predictions(mutations.values, predictions, probabilities, mutations.columns)
 
     fold_metrics = []
     for fold in range(1, int(fold_ids.max()) + 1):
         in_fold = fold_ids == fold
         table = evaluate_predictions(
-            mutations.values[in_fold],
-            predictions[in_fold],
-            probabilities[in_fold],
-            mutations.columns,
+            mutations.values[in_fold], predictions[in_fold], probabilities[in_fold], mutations.columns
         ).reset_index()
         table.insert(0, "fold", fold)
         fold_metrics.append(table)
@@ -179,10 +104,7 @@ def cross_validate_mutations(
         "split_method": split_method,
         "headline_metrics": "pooled out-of-fold (metrics.csv); per-fold values in fold_metrics.csv",
         "classification_threshold": 0.5,
-        "score_note": (
-            "Sigmoid outputs from weighted BCE are ranking scores, "
-            "not calibrated probabilities."
-        ),
+        "score_note": "Sigmoid outputs from weighted BCE are ranking scores, not calibrated probabilities.",
         "model": settings,
         "run": run_info(started),
     }
@@ -190,84 +112,37 @@ def cross_validate_mutations(
     if output is not None:
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
-
-        pd.DataFrame(
-            probabilities,
-            index=expression.index,
-            columns=mutations.columns,
-        ).to_csv(output / "oof_probabilities.csv")
-
-        pd.DataFrame(
-            predictions,
-            index=expression.index,
-            columns=mutations.columns,
-        ).to_csv(output / "oof_predictions.csv")
-
+        pd.DataFrame(probabilities, index=expression.index, columns=mutations.columns).to_csv(output / "oof_probabilities.csv")
+        pd.DataFrame(predictions, index=expression.index, columns=mutations.columns).to_csv(output / "oof_predictions.csv")
         metrics.to_csv(output / "metrics.csv")
         fold_metrics.to_csv(output / "fold_metrics.csv", index=False)
-
-        pd.DataFrame(
-            {
-                "sample_id": expression.index,
-                "fold": fold_ids,
-                "cancer": cancer.values,
-            }
-        ).to_csv(output / "fold_assignments.csv", index=False)
-
-        (output / "run_metadata.json").write_text(
-            json.dumps(metadata, indent=2),
-            encoding="utf-8",
-        )
-
+        assignments = pd.DataFrame({"sample_id": expression.index, "fold": fold_ids, "cancer": cancer.values})
+        assignments.to_csv(output / "fold_assignments.csv", index=False)
+        (output / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metrics, metadata
 
 
-def cross_validate_tmb(
-    expression,
-    tmb,
-    cancer,
-    config,
-    ml_model=None,
-    params=None,
-    output=None,
-    groups=None,
-    folds=None,
-):
+def cross_validate_tmb(expression, tmb, cancer, config, ml_model=None, params=None, output=None, groups=None, folds=None):
     """Out-of-fold TMB regression; `groups`/`folds` give each sample's group or fold."""
     started = time.perf_counter()
     ml_model, resolved_params = tmb_ml_model_params(config, ml_model)
     if params is not None:
         resolved_params = dict(params)
-
     cancer = cancer.reindex(expression.index)
     truth = tmb["TMB_log2"].to_numpy()
     fold_dir = _fold_dir(output, config)
-
-    logger.info(
-        "TMB cross-validation (%s): %d samples",
-        ml_model,
-        len(expression),
-    )
+    logger.info("TMB cross-validation (%s): %d samples", ml_model, len(expression))
 
     def fit_predict(fold, train_idx, test_idx):
         model = TmbModel(ml_model, config=config, **resolved_params)
-        model.fit(
-            expression.iloc[train_idx],
-            tmb.iloc[train_idx],
-        )
+        model.fit(expression.iloc[train_idx], tmb.iloc[train_idx])
         if fold_dir is not None:
             model.save(fold_dir / f"fold_{fold}")
         return model.predict(expression.iloc[test_idx])["TMB_log2_pred"].to_numpy()
 
     out_of_fold, fold_ids, split_method = cross_validate(
-        cancer,
-        config,
-        fit_predict,
-        np.float64,
-        _aligned(groups, expression.index),
-        _aligned(folds, expression.index),
+        cancer, config, fit_predict, np.float64, _aligned(groups, expression.index), _aligned(folds, expression.index)
     )
-
     predictions = pd.DataFrame(
         {
             "sample_id": expression.index,
@@ -279,39 +154,14 @@ def cross_validate_tmb(
             "TMB_pred": np.maximum(np.power(2, out_of_fold) - 1, 0),
         }
     )
-
-    summaries = [
-        {
-            "cancer": "__OVERALL__",
-            **tmb_metrics(truth, out_of_fold),
-        }
-    ]
-
+    summaries = [{"cancer": "__OVERALL__", **tmb_metrics(truth, out_of_fold)}]
     for cancer_code, subset in predictions.groupby("cancer"):
-        summaries.append(
-            {
-                "cancer": cancer_code,
-                **tmb_metrics(
-                    subset["TMB_log2_true"],
-                    subset["TMB_log2_pred"],
-                ),
-            }
-        )
-
+        summaries.append({"cancer": cancer_code, **tmb_metrics(subset["TMB_log2_true"], subset["TMB_log2_pred"])})
     summary = pd.DataFrame(summaries)
-
-    folds = range(1, int(fold_ids.max()) + 1)
-
     fold_metrics = pd.DataFrame(
         [
-            {
-                "fold": fold,
-                **tmb_metrics(
-                    truth[fold_ids == fold],
-                    out_of_fold[fold_ids == fold],
-                ),
-            }
-            for fold in folds
+            {"fold": fold, **tmb_metrics(truth[fold_ids == fold], out_of_fold[fold_ids == fold])}
+            for fold in range(1, int(fold_ids.max()) + 1)
         ]
     )
 
@@ -323,34 +173,17 @@ def cross_validate_tmb(
         "headline_metrics": "pooled out-of-fold (__OVERALL__ row of summary.csv); per-fold values in fold_metrics.csv",
         "target": "log2(coding TMB + 1)",
         "samples_without_coding_mutation_events": "dropped",
-        "model": {
-            "ml_model": ml_model,
-            **resolved_params,
-        },
+        "model": {"ml_model": ml_model, **resolved_params},
         "run": run_info(started),
     }
 
     if output is not None:
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
-
-        predictions.to_csv(
-            output / "oof_predictions.csv",
-            index=False,
-        )
-        summary.to_csv(
-            output / "summary.csv",
-            index=False,
-        )
-        fold_metrics.to_csv(
-            output / "fold_metrics.csv",
-            index=False,
-        )
-        (output / "run_metadata.json").write_text(
-            json.dumps(metadata, indent=2),
-            encoding="utf-8",
-        )
-
+        predictions.to_csv(output / "oof_predictions.csv", index=False)
+        summary.to_csv(output / "summary.csv", index=False)
+        fold_metrics.to_csv(output / "fold_metrics.csv", index=False)
+        (output / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return summary, metadata
 
 
@@ -427,11 +260,7 @@ def _commit() -> tuple[str | None, bool | None]:
         if head.returncode:
             return None, None
         status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=here,
-            capture_output=True,
-            text=True,
-            timeout=10,
+            ["git", "status", "--porcelain", "--untracked-files=no"], cwd=here, capture_output=True, text=True, timeout=10
         )
         return head.stdout.strip(), bool(status.stdout.strip())
     except (OSError, subprocess.SubprocessError):

@@ -12,9 +12,11 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from scipy import sparse
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import BatchSampler, DataLoader, RandomSampler, SequentialSampler, TensorDataset
+from torch.utils.data import Dataset as TorchDataset
 
 from .config import load_config
 from .data import Dataset, align_expression
@@ -43,13 +45,30 @@ def make_tree_model(ml_model: str, kind: str, params: dict | None = None):
     return getattr(module, prefix + kind.capitalize())(**dict(params or {}))
 
 
+def class_weighting(ml_model: str, labels, params: dict | None = None) -> tuple[dict, dict]:
+    """Model parameters and fit arguments that balance positives and negatives for a tree classifier."""
+    y = np.asarray(labels).astype(int)
+    positives = int(y.sum())
+    negatives = len(y) - positives
+    params = dict(params or {})
+    fit_kwargs: dict = {}
+    if ml_model in ("xgboost", "lightgbm"):
+        params.setdefault("scale_pos_weight", negatives / max(positives, 1))
+    elif ml_model == "random_forest":
+        params.setdefault("class_weight", "balanced")
+    else:  # gradient_boosting has no class weighting; weight the samples instead
+        weight_positive = len(y) / (2.0 * max(positives, 1))
+        weight_negative = len(y) / (2.0 * max(negatives, 1))
+        fit_kwargs["sample_weight"] = np.where(y == 1, weight_positive, weight_negative)
+    return params, fit_kwargs
+
+
 def model_settings(config: dict, overrides: dict | None = None) -> dict:
+    preprocessing = config["preprocessing"]
     return {
         **config["model"]["multitask_nn"],
-        "standardize_inputs": config["preprocessing"].get(
-            "standardize_inputs", True
-        ),
-        "random_state": config["preprocessing"].get("random_state", 42),
+        "standardize_inputs": preprocessing.get("standardize_inputs", True),
+        "random_state": preprocessing.get("random_state", 42),
         **(overrides or {}),
     }
 
@@ -103,25 +122,51 @@ class E2MModel:
         self.metadata: dict = {}
 
     # ------------------------------------------------------------------ fit
-    def fit(self, data, mutations=None) -> "E2MModel":
-        """Train; with `early_stopping` (default) a validation split picks the best epoch."""
-        dataset = _as_dataset(data, mutations)
-        if dataset.mutations is None:
-            raise ValueError("E2MModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
-        missing = int(dataset.mutations.isna().to_numpy().sum())
-        if missing:
+    def fit(self, data, mutations=None, features=None, targets=None) -> "E2MModel":
+        """Train on a Dataset or frames, or on a numpy / scipy-sparse matrix with `features` and `targets` names.
+
+        With `early_stopping` (default) a validation split picks the best epoch. A sparse matrix stays
+        sparse; only training batches are made dense (needs standardize_inputs: false).
+        """
+        if _is_matrix(data):
+            if features is None or (targets is None and not hasattr(mutations, "columns")):
+                raise ValueError("A matrix input needs features= and targets= (or mutations as a DataFrame).")
+            features = list(features)
+            targets = list(mutations.columns if targets is None else targets)
+            labels = mutations
+            if sparse.issparse(data):
+                if self.settings["standardize_inputs"]:
+                    raise ValueError("Sparse input needs standardize_inputs: false.")
+                x = sparse.csr_matrix(data, dtype=np.float32)
+                if not np.isfinite(x.data).all():
+                    raise ValueError("Input contains missing or infinite values.")
+            else:
+                x = _float_array(data)
+            feature_means = np.asarray(x.mean(axis=0), dtype=np.float32).ravel()
+        else:
+            dataset = _as_dataset(data, mutations)
+            if dataset.mutations is None:
+                raise ValueError("E2MModel.fit needs mutation labels (a Dataset with mutations, or mutations=).")
+            features = dataset.expression.columns.tolist()
+            targets = dataset.mutations.columns.tolist()
+            labels = dataset.mutations
+            x = _float_array(dataset.expression)
+            feature_means = dataset.expression.mean(axis=0).to_numpy(dtype=np.float32)
+
+        y = np.asarray(labels, dtype=np.float32)
+        missing = np.isnan(y)
+        if missing.any():
             raise ValueError(
-                f"{missing} mutation labels are missing (not profiled) in "
-                f"{int(dataset.mutations.isna().any().sum())} targets; training needs complete labels."
+                f"{int(missing.sum())} mutation labels are missing (not profiled) in "
+                f"{int(missing.any(axis=0).sum())} targets; training needs complete labels."
             )
-        x = _float_array(dataset.expression)
-        y = _float_array(dataset.mutations)
+        y = _float_array(y)
         if self.settings["standardize_inputs"]:
             self.scaler = StandardScaler()
             x = self.scaler.fit_transform(x).astype(np.float32)
         if self.settings.get("early_stopping", True):
             train_idx, validation_idx = train_test_split(
-                np.arange(len(x)),
+                np.arange(x.shape[0]),
                 test_size=self.settings["validation_split"],
                 random_state=self.settings["random_state"],
                 shuffle=True,
@@ -130,15 +175,16 @@ class E2MModel:
                 self._loader(x[train_idx], y[train_idx], shuffle=True),
                 y[train_idx],
                 self._loader(x[validation_idx], y[validation_idx], shuffle=False),
+                x.shape[1],
             )
         else:
-            self._train(self._loader(x, y, shuffle=True), y, validation_loader=None)
+            self._train(self._loader(x, y, shuffle=True), y, None, x.shape[1])
 
-        self.features = dataset.expression.columns.tolist()
-        self.targets = dataset.mutations.columns.tolist()
-        self.feature_means = dataset.expression.mean(axis=0).to_numpy(dtype=np.float32)
+        self.features = features
+        self.targets = targets
+        self.feature_means = feature_means
         self.metadata = {
-            "n_samples": len(x),
+            "n_samples": x.shape[0],
             "n_features": x.shape[1],
             "n_targets": y.shape[1],
             "model": self.settings,
@@ -150,9 +196,12 @@ class E2MModel:
         self.metadata["training_config"] = self.config
         return self
 
-    def _loader(self, x: np.ndarray, y: np.ndarray, shuffle: bool) -> DataLoader:
-        dataset = TensorDataset(torch.from_numpy(x), torch.from_numpy(y))
-        return DataLoader(dataset, batch_size=int(self.settings["batch_size"]), shuffle=shuffle)
+    def _loader(self, x, y: np.ndarray, shuffle: bool) -> DataLoader:
+        batch_size = int(self.settings["batch_size"])
+        if sparse.issparse(x):
+            order = (RandomSampler if shuffle else SequentialSampler)(range(x.shape[0]))
+            return DataLoader(_SparseRows(x, y), batch_size=None, sampler=BatchSampler(order, batch_size, drop_last=False))
+        return DataLoader(TensorDataset(torch.from_numpy(x), torch.from_numpy(y)), batch_size=batch_size, shuffle=shuffle)
 
     def _new_network(self, input_size: int, output_size: int) -> MultitaskNetwork:
         return MultitaskNetwork(
@@ -162,13 +211,13 @@ class E2MModel:
             float(self.settings["dropout_rate"]),
         )
 
-    def _train(self, train_loader: DataLoader, train_labels: np.ndarray, validation_loader: DataLoader | None):
+    def _train(self, train_loader: DataLoader, train_labels: np.ndarray, validation_loader: DataLoader | None, input_size: int):
         settings = self.settings
         torch.use_deterministic_algorithms(bool(settings.get("deterministic", True)))
         torch.manual_seed(settings["random_state"])
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(settings["random_state"])
-        self.network = self._new_network(train_loader.dataset.tensors[0].shape[1], train_labels.shape[1]).to(self.device)
+        self.network = self._new_network(input_size, train_labels.shape[1]).to(self.device)
         optimizer = torch.optim.Adam(
             self.network.parameters(),
             lr=float(settings["learning_rate"]),
@@ -246,9 +295,26 @@ class E2MModel:
         aligned, _ = align_expression(_as_dataset(data).expression, self.features, self.feature_means, overlap)
         return aligned
 
+    def _matrix_forward(self, x, encoder: bool) -> np.ndarray:
+        """Run a numpy / sparse matrix (training feature order) through the network in dense chunks."""
+        if x.shape[1] != len(self.features):
+            raise ValueError("A matrix input must have the training features in training order (model.features).")
+        outputs = []
+        self.network.eval()
+        with torch.no_grad():
+            for start in range(0, x.shape[0], 4096):
+                chunk = x[start:start + 4096]
+                values = torch.from_numpy(self.transform(chunk.toarray() if sparse.issparse(chunk) else chunk))
+                values = values.to(self.device)
+                result = self.network.encoder(values) if encoder else torch.sigmoid(self.network(values))
+                outputs.append(result.cpu().numpy())
+        return np.concatenate(outputs)
+
     def predict(self, data, min_feature_overlap=None) -> pd.DataFrame:
         """Mutation probabilities (samples x targets)."""
         self._check_fitted()
+        if _is_matrix(data):
+            return pd.DataFrame(self._matrix_forward(data, encoder=False), columns=self.targets)
         aligned = self._align(data, min_feature_overlap)
         self.network.eval()
         with torch.no_grad():
@@ -259,6 +325,9 @@ class E2MModel:
     def embed(self, data, min_feature_overlap=None) -> pd.DataFrame:
         """Shared-encoder embeddings (samples x embedding dims)."""
         self._check_fitted()
+        if _is_matrix(data):
+            values = self._matrix_forward(data, encoder=True)
+            return pd.DataFrame(values, columns=[f"embedding_{i}" for i in range(values.shape[1])])
         aligned = self._align(data, min_feature_overlap)
         self.network.eval()
         with torch.no_grad():
@@ -484,6 +553,24 @@ class TmbModel:
     def __repr__(self) -> str:
         state = "fitted" if self.regressor is not None else "unfitted"
         return f"TmbModel(ml_model={self.ml_model!r}, {state})"
+
+
+def _is_matrix(data) -> bool:
+    return isinstance(data, np.ndarray) or sparse.issparse(data)
+
+
+class _SparseRows(TorchDataset):
+    """Training rows from a sparse matrix, made dense one batch at a time."""
+
+    def __init__(self, x, y: np.ndarray):
+        self.x, self.y = x, y
+
+    def __len__(self) -> int:
+        return self.x.shape[0]
+
+    def __getitem__(self, rows):
+        rows = np.asarray(rows)
+        return torch.from_numpy(self.x[rows].toarray()), torch.from_numpy(self.y[rows])
 
 
 def _float_array(values) -> np.ndarray:

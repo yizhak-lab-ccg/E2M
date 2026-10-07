@@ -121,25 +121,12 @@ def _require_shap():
 
 def _explain_tree(expression, labels, explained_expression, ml_model, settings):
     """Fit a class-weighted tree classifier for one target and explain it with Tree SHAP."""
-    from .models import make_tree_model
+    from .models import class_weighting, make_tree_model
 
     y = labels.astype(int).to_numpy()
     if len(np.unique(y)) < 2:
         raise ValueError("The selected mutation target has only one class.")
-    positives = int(y.sum())
-    negatives = len(y) - positives
-
-    parameters = dict(settings)
-    fit_kwargs: dict = {}
-    if ml_model in ("xgboost", "lightgbm"):
-        parameters.setdefault("scale_pos_weight", negatives / max(positives, 1))
-    elif ml_model == "random_forest":
-        parameters.setdefault("class_weight", "balanced")
-    else:  # gradient_boosting has no class weighting; weight the samples instead
-        weight_positive = len(y) / (2.0 * max(positives, 1))
-        weight_negative = len(y) / (2.0 * max(negatives, 1))
-        fit_kwargs["sample_weight"] = np.where(y == 1, weight_positive, weight_negative)
-
+    parameters, fit_kwargs = class_weighting(ml_model, y, settings)
     classifier = make_tree_model(ml_model, "classifier", parameters)
     classifier.fit(expression.values, y, **fit_kwargs)
 

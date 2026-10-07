@@ -1,0 +1,8 @@
+.git
+results
+e2m_data
+models
+examples
+tests
+*.ipynb
+**/__pycache__
