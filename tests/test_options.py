@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from e2m import format_options, options, set_verbose
-from e2m.backends import TREE_MODELS, make_classifier
+from e2m.models import TREE_MODELS, make_tree_model
 
 
 def test_options_lists_the_main_choices():
@@ -47,20 +47,20 @@ def test_make_classifier_sklearn_models(ml_model):
     rng = np.random.default_rng(0)
     features = rng.normal(size=(30, 5))
     labels = (features[:, 0] > 0).astype(int)
-    classifier = make_classifier(ml_model, {"n_estimators": 10, "random_state": 0})
+    classifier = make_tree_model(ml_model, "classifier", {"n_estimators": 10, "random_state": 0})
     classifier.fit(features, labels)
     assert classifier.predict(features).shape == (30,)
 
 
 def test_make_classifier_rejects_unknown_ml_model():
     with pytest.raises(ValueError):
-        make_classifier("not_a_model")
+        make_tree_model("not_a_model", "classifier")
 
 
 @pytest.mark.parametrize("method", ["xgboost", "random_forest", "gradient_boosting"])
 def test_tree_shap_supports_multiple_ml_models(method, tmp_path):
     pytest.importorskip("shap")
-    from e2m.config import resolve_config
+    from e2m.config import load_config
     from e2m.interpretation import explain_single_target
 
     rng = np.random.default_rng(0)
@@ -69,10 +69,10 @@ def test_tree_shap_supports_multiple_ml_models(method, tmp_path):
     expression = pd.DataFrame(rng.normal(size=(60, 8)), index=samples, columns=genes)
     labels = pd.Series((expression["G0"] > 0).astype(int).to_numpy(), index=samples)
 
-    config = resolve_config()
+    config = load_config()
     # model is unused for the tree methods, so a fitted network is not required here.
-    metadata = explain_single_target(
-        None, expression, labels, "G0_target", 0, method, tmp_path / method, config
+    _, metadata = explain_single_target(
+        None, expression, labels, "G0_target", 0, method, config, tmp_path / method
     )
     assert metadata["method"] == method
     summary = pd.read_csv(tmp_path / method / "feature_summary.csv")

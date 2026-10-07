@@ -12,7 +12,7 @@ pytest.importorskip("xgboost")
 
 from e2m.config import load_config
 from e2m.interpretation import explain_single_target
-from e2m.models import MultitaskModel
+from e2m.models import E2MModel
 
 
 @pytest.fixture()
@@ -23,17 +23,8 @@ def synthetic_model_and_data():
     expression = pd.DataFrame(rng.normal(size=(48, 8)), index=samples, columns=features)
     logits = expression["GENE_0"] - 0.5 * expression["GENE_1"]
     labels = (logits > logits.median()).astype(int).rename("TP53")
-    model = MultitaskModel(
-        input_size=8,
-        output_size=1,
-        hidden_layers=[12, 6],
-        dropout_rate=0.0,
-        epochs=3,
-        batch_size=16,
-        patience=2,
-        random_state=12,
-    )
-    model.fit_full(expression.values, labels.to_numpy()[:, None])
+    model = E2MModel(hidden_layers=[12, 6], dropout_rate=0.0, epochs=3, batch_size=16, patience=2, random_state=12)
+    model.fit(expression, labels.to_frame())
     return model, expression, labels
 
 
@@ -55,14 +46,14 @@ def _small_interpretation_config():
 def test_single_target_shap_methods(synthetic_model_and_data, tmp_path, method):
     model, expression, labels = synthetic_model_and_data
     output = tmp_path / method
-    metadata = explain_single_target(
+    _, metadata = explain_single_target(
         model=model,
         expression=expression,
         labels=labels,
         target="TP53",
         target_index=0,
         method=method,
-        output_dir=output,
+        output=output,
         config=_small_interpretation_config(),
     )
     assert metadata["method"] == method

@@ -10,9 +10,8 @@ import pytest
 
 from e2m.cli import build_parser
 from e2m.config import load_config
-from e2m.data import XenaTCGALoader, canonical_sample_id
-from e2m.metrics import normalized_auprc
-from e2m.workflow import align_expression
+from e2m.data import XenaTCGALoader, align_expression, canonical_sample_id
+from e2m.evaluation import normalized_auprc
 
 
 def test_default_config_is_packaged_and_named_clearly():
@@ -131,7 +130,7 @@ def test_tutorial_notebook_has_no_stored_outputs():
 
 def test_tmb_uses_shared_folds_and_writes_outputs(tmp_path):
     pytest.importorskip("xgboost")
-    from e2m.tmb import run_tmb_cross_validation
+    from e2m.training import cross_validate_tmb
 
     rng = np.random.default_rng(5)
     samples = [f"S{index}" for index in range(30)]
@@ -142,7 +141,7 @@ def test_tmb_uses_shared_folds_and_writes_outputs(tmp_path):
     config = load_config()
     config["evaluation"]["cv_folds"] = 3
     config["model"]["xgboost"].update({"n_estimators": 2, "n_jobs": 1, "max_depth": 2})
-    result = run_tmb_cross_validation(expression, tmb, cancer, config, tmp_path)
+    _, result = cross_validate_tmb(expression, tmb, cancer, config, output=tmp_path)
     assert result["split_method"] == "shuffled_kfold"
     assert (tmp_path / "oof_predictions.csv").exists()
     assert (tmp_path / "summary.csv").exists()
