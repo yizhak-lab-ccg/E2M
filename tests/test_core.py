@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from e2m.cli import build_parser
+from e2m.cli import _data_overrides, build_parser
 from e2m.config import load_config
 from e2m.data import XenaTCGALoader, align_expression, sample_id
 from e2m.evaluation import normalized_auprc
@@ -118,6 +118,16 @@ def test_cli_contains_mutation_tmb_and_shap_commands():
     assert "tmb" in help_text
     assert "explain" in help_text
     assert "head-weights" in help_text
+
+
+@pytest.mark.parametrize("command", ["download", "cv", "train", "tmb"])
+def test_cli_normalization_preserves_config_unless_explicit(command):
+    arguments = [command, "--cancer", "LUAD", "--output", "results/test"]
+    parser = build_parser()
+    assert "normalization" not in _data_overrides(parser.parse_args(arguments))
+    for normalization in ("cpm", "none"):
+        parsed = parser.parse_args(arguments + ["--normalization", normalization])
+        assert _data_overrides(parsed)["normalization"] == normalization
 
 
 def test_tutorial_notebook_has_no_stored_outputs():

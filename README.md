@@ -1,17 +1,14 @@
 # E2M
 
-`e2m` predicts somatic mutation status and tumor mutational burden from RNA expression.
+`e2m` predicts somatic mutation status and tumor mutational burden (TMB) from RNA expression.
 
-The main mutation model is a multitask neural network. A shared encoder learns a sample representation and one output predicts each retained mutation target. TMB prediction uses XGBoost regression. SHAP can explain one mutation output with either a separate XGBoost classifier, as used in the manuscript, or the trained multitask neural network directly.
+The mutation model is a multitask neural network: a shared encoder learns a sample representation, and one output predicts each mutation target. TMB is predicted with tree regression (XGBoost by default). SHAP explains one mutation target, either with a separate XGBoost classifier, as in the manuscript, or with the multitask network directly.
 
-
-<img width="2246" height="759" alt="image" src="https://github.com/user-attachments/assets/46bc627f-922a-4792-ae67-893da44edaaa" />
+<img width="2246" height="759" alt="Overview of the Expression-to-Mutation workflow" src="https://github.com/user-attachments/assets/46bc627f-922a-4792-ae67-893da44edaaa" />
 
 ## Installation
 
-Python 3.10 or newer is required. Clone the repository and create an isolated environment with either Conda or venv. `pip install -e .` is an editable install from the clone.
-
-### Conda
+Python 3.10 or newer is required.
 
 ```bash
 git clone https://github.com/yizhak-lab-ccg/E2M.git
@@ -19,238 +16,103 @@ cd E2M
 
 conda create -n e2m python=3.10
 conda activate e2m
-pip install -e .
+pip install -e ".[interpretation]"   # the extra adds SHAP
 ```
 
-`pip install -e .` installs mutation prediction and TMB prediction. To also use SHAP interpretation, install the optional extra:
+Alternatively, run `conda env create -f environment.yml`, then `conda activate e2m`. Use `pip install -e .` if you do not need SHAP.
 
-```bash
-pip install -e ".[interpretation]"
-```
+For venv, use `python -m venv .venv`, then `source .venv/bin/activate` (Windows PowerShell: `.venv\Scripts\Activate.ps1`), followed by the same pip install.
 
-The `interpretation` extra adds SHAP. XGBoost is a core dependency, so both TMB prediction and the XGBoost SHAP workflow work without the extra.
+For a pinned Linux GPU environment (Python 3.10, CUDA 12.6), build the [Dockerfile](Dockerfile) using the instructions at the top of that file. It installs the versions in [requirements-lock.txt](requirements-lock.txt).
 
-### venv
+To check the installation, run `e2m --help` and `python examples/synthetic_quickstart.py`.
 
-```bash
-git clone https://github.com/yizhak-lab-ccg/E2M.git
-cd E2M
+## Tutorials
 
-python -m venv .venv
-source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -e .
-```
-
-For SHAP interpretation, install `pip install -e ".[interpretation]"`.
-
-### Conda environment file
-
-```bash
-git clone https://github.com/yizhak-lab-ccg/E2M.git
-cd E2M
-
-conda env create -f environment.yml
-conda activate e2m
-```
-
-The environment file creates the Conda environment and installs the package, with the interpretation extra, through pip.
-
-### Verify the installation
-
-Check that the command-line interface is available:
-
-```bash
-e2m --help
-```
-
-Run the lightweight synthetic check:
-
-```bash
-python examples/synthetic_quickstart.py
-```
-
-When the interpretation dependencies are installed, run the full runtime check:
-
-```bash
-python examples/full_runtime_check.py
-```
-
-The full check covers neural-network training, model persistence, prediction, embeddings, output-head weights, XGBoost Tree SHAP, neural-network SHAP, and TMB cross-validation.
+- [examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) works through the full workflow on TCGA-LUAD, step by step.
+- [examples/external_transfer.ipynb](examples/external_transfer.ipynb) trains on TCGA-LUAD, predicts on the external cohort GSE31210, and scores EGFR and KRAS against that cohort's reported alterations.
 
 ## Python API
 
-The scripting API is three classes. A `Dataset` loads one or more TCGA cohorts and keeps
-the expression matrix, mutation labels, TMB, and cancer labels aligned to the same
-samples; `data.subset(...)` returns a smaller `Dataset`. `E2MModel` is the multitask
-mutation network and `TmbModel` is the tree regressor for TMB. Fit either one on a
-`Dataset`, then predict on another `Dataset` or on any samples-by-genes matrix. Results
-come back as pandas objects.
+A `Dataset` loads one or more TCGA cohorts and keeps the expression, mutation labels, TMB, and cancer labels aligned to the same samples. `E2MModel` is the multitask mutation network and `TmbModel` is the tree regressor for TMB. Fit either one on a `Dataset`, then predict on another `Dataset` or on a samples-by-genes DataFrame.
 
 ```python
 from e2m import Dataset, E2MModel, TmbModel
 
-# Download, preprocess, and align a cohort (expression, mutations, TMB, cancer).
 data = Dataset.from_tcga(["LUAD"], data_dir="./e2m_data")
-data                                  # Dataset(samples=..., genes=..., targets=..., tmb=True, ...)
-
-# Hold out samples explicitly and fit on the rest.
 train = data.subset(samples=data.samples[:400])
 test = data.subset(samples=data.samples[400:])
 
-model = E2MModel().fit(train)         # or E2MModel(epochs=50, hidden_layers=[512, 256])
-probabilities = model.predict(test)   # samples x targets DataFrame
-metrics = model.cross_validate(data)  # per-target AUPRC, normalized-AUPRC, ROC-AUC, ...
+model = E2MModel().fit(train)          # or E2MModel(epochs=50, hidden_layers=[512, 256])
+probabilities = model.predict(test)    # samples x targets DataFrame
+model.predict(test.expression)        # DataFrame columns align by gene symbol
+metrics = model.cross_validate(data, output="results/luad_cv")
 embeddings = model.embed(data)
-shap = model.explain(data, target="TP53", method="xgboost")  # in-memory SHAP; returns a DataFrame
-model.save("models/luad")             # E2MModel.load("models/luad") to reuse
+shap = model.explain(data, target="TP53", method="xgboost")
+model.save("models/luad")              # E2MModel.load("models/luad")
 
-# Predict on any expression matrix (a subset, or an external cohort); genes align by symbol.
-model.predict(test.expression)
-
-# TMB regression with a pluggable tree ML model.
-tmb = TmbModel(ml_model="lightgbm").fit(data)         # xgboost (default), lightgbm, random_forest, gradient_boosting
-tmb_summary = TmbModel().cross_validate(data)         # per-cancer + overall Spearman/Pearson/MAE/RMSE
+tmb_summary = TmbModel().cross_validate(data)   # per-cancer and overall Spearman, Pearson, MAE, RMSE
 ```
 
-[examples/LUAD_tutorial.ipynb](examples/LUAD_tutorial.ipynb) works through this on TCGA-LUAD,
-step by step. `examples/external_transfer.ipynb` trains on TCGA-LUAD, predicts on the
-GSE31210 external cohort, and scores EGFR and KRAS against the alteration status that
-cohort reports.
+Mutation outputs are ranking scores, not calibrated probabilities. Report held-out performance using cross-validation outputs. Normalized AUPRC is `(AUPRC - prevalence) / (1 - prevalence)`: 0 at the prevalence baseline and 1 for perfect ranking. Classification metrics use a fixed 0.5 threshold. By default, neural fitting holds out 15% of the supplied samples for early stopping, with no subsequent refit on all samples.
 
-`e2m.options()` returns the accepted expression datasets, transforms, TMB models, SHAP
-methods, and TCGA cancer codes (`e2m.format_options()` prints them; the CLI equivalent is
-`e2m options`). The workflow runs quietly by default; call `e2m.set_verbose()`, or pass
-`--verbose` on the CLI, to print step-by-step progress.
-
-```python
-import e2m
-e2m.options()["expression_transform"]     # {"log1p": ..., "raw": ..., "xena": ...}
-e2m.set_verbose()                          # print download / cross-validation / training progress
-```
+For external data, use the same expression units and preprocessing as the training data. DataFrames use sample IDs as the index and gene symbols as columns; `E2MModel` also accepts NumPy and sparse matrices, which must already follow the training feature order. Call `e2m.options()` to inspect supported choices and `e2m.set_verbose()` to print progress.
 
 ## Command line
-
-The `e2m` command runs the same workflow and writes the results to disk. These commands use
-TCGA lung adenocarcinoma, `LUAD`, with the manuscript preprocessing choices.
-
-```bash
-# Download Xena STAR counts and MC3 mutation data, then export prepared tables.
-e2m download --cancer LUAD --expression-dataset star_counts --transform log1p \
-  --data-dir ./e2m_data --output results/luad/data
-
-# Evaluate gene mutation prediction with held-out five-fold predictions.
-e2m cv --cancer LUAD --expression-dataset star_counts --transform log1p \
-  --data-dir ./e2m_data --output results/luad/mutation_cv
-
-# Evaluate coding TMB prediction with held-out five-fold predictions.
-e2m tmb --cancer LUAD --expression-dataset star_counts --transform log1p \
-  --data-dir ./e2m_data --output results/luad/tmb_cv
-
-# Train a deployable multitask model on all matched LUAD samples.
-e2m train --cancer LUAD --expression-dataset star_counts --transform log1p \
-  --data-dir ./e2m_data --output models/luad
-
-# Explain TP53 with the manuscript XGBoost Tree SHAP approach.
-e2m explain --model-dir models/luad --target TP53 --method xgboost \
-  --data-dir ./e2m_data --output results/luad/shap_xgboost_tp53
-
-# Explain the TP53 output of the multitask network directly.
-e2m explain --model-dir models/luad --target TP53 --method neural \
-  --data-dir ./e2m_data --output results/luad/shap_neural_tp53
-
-# Extract LUAD sample embeddings and target head weights.
-e2m embed --model-dir models/luad \
-  --expression results/luad/data/expression.csv.gz \
-  --output results/luad/sample_embeddings.csv
-e2m head-weights --model-dir models/luad \
-  --output results/luad/head_weights.csv
-```
-
-See [TUTORIAL.md](TUTORIAL.md) for what each step does and what it writes.
-
-## Xena expression choices
-
-`e2m` downloads cohort-level files from the UCSC Xena GDC hub.
-
-| Option | Xena file pattern | Meaning |
-|---|---|---|
-| `star_counts` | `TCGA-{cancer}.star_counts.tsv.gz` | STAR gene counts. This is the manuscript default. |
-| `star_tpm` | `TCGA-{cancer}.star_tpm.tsv.gz` | STAR TPM. |
-| `star_fpkm` | `TCGA-{cancer}.star_fpkm.tsv.gz` | STAR FPKM. |
-| `star_fpkm_uq` | `TCGA-{cancer}.star_fpkm-uq.tsv.gz` | STAR upper-quartile FPKM. |
-
-Xena RNA expression values are downloaded on a log2 scale: `log2(value + offset)`. `e2m` treats the underlying quantity as counts (or TPM/FPKM) and log-transforms it by default. Choose one transform:
-
-| Option | Action |
-|---|---|
-| `log1p` | Recover the underlying quantity by inverting `log2(value + offset)`, then apply natural `log1p`. This is the package default, applied uniformly to every dataset. |
-| `raw` | Recover the underlying quantity by inverting `log2(value + offset)`, with no log transform (linear scale). Use it to opt out of logging. |
-| `xena` | Keep the downloaded Xena values unchanged (already log2). No inversion, so it needs no offset. |
-
-The `offset` defaults to 1, matching STAR counts (`log2(count + 1)`). It is configurable via `--log-offset` on the CLI, or `data.xena_log_offset` (equivalently `data_overrides={"xena_log_offset": ...}`). Xena TPM/FPKM datasets may use a different small offset — check the dataset metadata and set `--log-offset` accordingly, or use `xena` to skip the inversion entirely. For the z-scored neural network, `log1p` and `xena` differ only by a constant and give the same model; for the tree models any monotonic transform is equivalent — so the offset only matters for `raw` (linear) inputs and for exported values.
-
-By default, the loader retains GENCODE v36 protein-coding genes, maps Ensembl identifiers to gene symbols, and averages duplicate symbols. Mutation labels come from the Xena MC3 nonsilent gene-level matrices. Targets must occur in at least 5 percent of matched samples, and at most the 400 most frequent targets are retained.
-
-## Main commands
 
 | Command | Purpose |
 |---|---|
 | `download` | Download, preprocess, cache, and optionally export matched data. |
-| `cv` | Produce held-out mutation probabilities and normalized AUPRC metrics. |
-| `tmb` | Produce held-out predictions for `log2(coding TMB + 1)`. |
-| `train` | Train a full-cohort model bundle for reuse. |
-| `predict` | Predict mutation probabilities for a samples by genes CSV. |
+| `cv` | Cross-validated mutation probabilities and metrics. |
+| `tmb` | Cross-validated predictions of `log2(coding TMB + 1)`. |
+| `train` | Train a mutation model with an internal early-stopping split. |
+| `predict` | Predict mutation probabilities for a samples-by-genes CSV. |
 | `embed` | Extract the last shared encoder layer. |
 | `head-weights` | Extract one output-head vector per mutation target. |
-| `explain` | Explain one selected mutation output with SHAP. |
+| `explain` | Explain one mutation target with SHAP. |
 | `options` | List accepted expression datasets, transforms, TMB models, SHAP methods, and cancer codes. |
 
-Use `e2m <command> --help` for command-specific options. Add `--verbose` to any command to print progress to stderr.
+```bash
+e2m cv --cancer LUAD --data-dir ./e2m_data --output results/luad/mutation_cv
+e2m tmb --cancer LUAD --data-dir ./e2m_data --output results/luad/tmb_cv
+e2m train --cancer LUAD --data-dir ./e2m_data --output models/luad
+e2m explain --model-dir models/luad --target TP53 --method xgboost \
+  --data-dir ./e2m_data --output results/luad/shap_tp53
+```
+
+Run `e2m <command> --help` for each command's options and add `--verbose` to print progress. All defaults are in [src/e2m/default_config.yaml](src/e2m/default_config.yaml).
+
+The commands above use package defaults, including no CPM normalization. The exact manuscript TCGA configuration is copied in [configs/manuscript.yaml](configs/manuscript.yaml) from [E2M-analyses, Runs/TCGA/config/e2m.yaml](https://github.com/asafpinhasitechnion/E2M-analyses/blob/main/Runs/TCGA/config/e2m.yaml); the published runs used E2M commit `b201b22`. Pass `--config configs/manuscript.yaml` to `download`, `cv`, `train`, or `tmb` to use those settings (including GPU XGBoost). To enable only CPM, pass `--normalization cpm`; the package default remains `none`. The analysis repository's run scripts handle the manuscript cohorts and downstream analyses.
+
+## Data
+
+Expression is downloaded from the UCSC Xena GDC hub: `star_counts` (default, as in the manuscript), `star_tpm`, `star_fpkm`, or `star_fpkm_uq`. By default (`--transform log1p`), `e2m` inverts the downloaded log2 values and applies natural `log1p`. The inversion assumes `log2(value + offset)`, with `--log-offset 1` by default; set the offset to match the dataset metadata. Use `raw` for the recovered linear scale or `xena` to keep the downloaded values without inversion.
+
+The loader keeps GENCODE v36 protein-coding genes and sums duplicate gene symbols. Mutation labels are the MC3 nonsilent gene-level calls. Samples without matching MC3 data are excluded; missing gene entries in the MC3 gene-level matrices are treated as no mutation. Targets are genes mutated in at least 5% of samples, up to the 400 most frequent.
+
+Coding TMB is the number of MC3 events in the configured coding variant classes per sample; it is not normalized per megabase. Samples without a qualifying event are excluded from TMB analysis. The regression target is `log2(TMB + 1)`.
 
 ## SHAP methods
 
-`--method xgboost` follows the manuscript interpretation workflow. It trains a separate full-cohort XGBoost classifier for the selected mutation target and applies Tree SHAP. This model is for interpretation and is not used as the primary cross-validated mutation predictor.
+- `xgboost` (manuscript default) trains a separate XGBoost classifier on the full cohort for the selected target and applies Tree SHAP. `lightgbm`, `random_forest`, and `gradient_boosting` work the same way.
+- `neural` applies SHAP GradientExplainer to the selected output of the trained multitask network, with a background sample from the same cohort.
 
-The tree attribution model is pluggable: `--method` also accepts `lightgbm`, `random_forest`, and `gradient_boosting`, each explained with `shap.TreeExplainer`. Class imbalance is handled per ML model (`scale_pos_weight` for the boosting models, balanced class or sample weights for the scikit-learn ones). `xgboost` remains the manuscript default.
+Tree SHAP rankings are descriptive, in-sample attributions and may reflect subtype, co-mutation, immune/stromal composition, or other correlated biology; they do not establish causal effects.
 
-`--method neural` applies SHAP GradientExplainer directly to the selected probability output of the trained multitask network. It uses a sampled background from the same cohort. This method explains the neural model itself, but can be slower and more sensitive to the background sample than Tree SHAP.
+The tree methods explain a separately fitted classifier; `neural` explains the mutation network itself. LightGBM requires the additional `lightgbm` extra: `pip install -e ".[interpretation,lightgbm]"`.
 
-Each explanation writes:
+The CLI, or `model.explain(..., output=...)` in Python, writes `feature_summary.csv` (all features ranked by mean absolute SHAP), `sample_shap_top_features.csv.gz` (per-sample values for the top features), and `metadata.json`.
 
-- `feature_summary.csv`: all expression features ranked by mean absolute SHAP.
-- `sample_shap_top_features.csv.gz`: per-sample SHAP and expression values for the leading features.
-- `metadata.json`: method, output scale, and sample counts.
+## Outputs
 
-## Model bundle
+- **Mutation cross-validation** (`cv`): `oof_probabilities.csv` (scores), `oof_predictions.csv` (binary calls), `metrics.csv` (pooled metrics), `fold_metrics.csv`, and `fold_assignments.csv`.
+- **TMB cross-validation** (`tmb`): `oof_predictions.csv` (true/predicted values on raw and log2 scales, with fold assignments), `summary.csv` (pooled and per-cancer metrics), and `fold_metrics.csv`. MAE, RMSE, and correlations are computed on the log2 scale.
+- **Both CV workflows**: fold models (`folds/`, by default) and `run_metadata.json` (settings, package versions, device, and E2M commit).
+- **Trained model** (`train`): network weights and input scaler (`model.pt`), feature order (`features.json`), target order (`targets.json`), feature means for missing genes, metadata, and training history.
+- **Preprocessing**: `download --output`, `cv`, and `train` write `preprocessing_manifest.json` (data sources, checksums, and preprocessing settings); in Python it is `data.manifest`.
 
-`e2m train` writes:
-
-- `model.pt`: network weights, scaler, and model settings.
-- `features.json`: required expression feature order.
-- `feature_means.npy`: safe fill values for missing input features.
-- `targets.json`: mutation output order.
-- `model_metadata.json`: cancers, data choices, and resolved training configuration.
-- `training_history.csv`: full-cohort training loss.
-
-Prediction requires at least 80 percent feature overlap by default. Missing training features are filled with their training means, which become zero after standardization.
-
-## Repository layout
-
-```text
-src/e2m/
-  data.py           # Dataset, TCGA loading, feature alignment
-  training.py       # cross-validation for mutations and TMB
-  models.py         # E2MModel (multitask network), TmbModel, tree models
-  evaluation.py     # classification and TMB metrics
-  interpretation.py # SHAP
-  config.py         # config loading, options(), set_verbose()
-  cli.py
-  default_config.yaml
-examples/
-tests/
-TUTORIAL.md
-```
+Prediction requires at least 80% of the training features by default; missing features are filled with their training means.
 
 ## Citation and license
 
-If you use this package, cite the accompanying Expression-to-Mutation manuscript. The repository is licensed under the MIT License.
+If you use this package, please cite the accompanying Expression-to-Mutation manuscript. The repository is licensed under the MIT License.

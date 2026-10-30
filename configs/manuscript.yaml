@@ -1,0 +1,58 @@
+# Settings for src/run_tcga.py, applied on top of E2M's packaged defaults.
+# The data, model, evaluation and interpretation values are written out in full so the analysis
+# does not depend on E2M defaults.
+
+run:
+  # The 32 TCGA cancer types used in the paper (LAML is not used).
+  cohorts: [ACC, BLCA, BRCA, CESC, CHOL, COAD, DLBC, ESCA, GBM, HNSC, KICH, KIRC, KIRP, LGG, LIHC, LUAD,
+            LUSC, MESO, OV, PAAD, PCPG, PRAD, READ, SARC, SKCM, STAD, TGCT, THCA, THYM, UCEC, UCS, UVM]
+  # SHAP is run for targets whose pooled out-of-fold normalized AUPRC exceeds this value.
+  shap_min_normalized_auprc: 0.05
+
+data:
+  expression_dataset: star_counts
+  expression_transform: log1p
+  normalization: cpm            # cpm | none (log1p of counts)
+  protein_coding_only: true
+  protein_coding_mutation_targets: true
+  collapse_duplicate_symbols: sum
+  min_mutation_prevalence: 0.05
+  min_mutation_positives: 0
+  max_mutation_targets: 400
+  targets: null
+
+preprocessing:
+  random_state: 42
+  standardize_inputs: true
+
+model:
+  multitask_nn:
+    hidden_layers: [512, 256]
+    dropout_rate: 0.3
+    learning_rate: 0.0005
+    weight_decay: 0.0003
+    batch_size: 64
+    epochs: 100
+    patience: 6
+    validation_split: 0.15
+    early_stopping: true
+    deterministic: true
+    gradient_clip: 1.0
+    use_pos_weight: true
+  xgboost:
+    n_estimators: 300
+    learning_rate: 0.1
+    random_state: 42
+    n_jobs: -1
+    device: cuda
+  tmb_ml_model: xgboost
+
+evaluation:
+  cv_folds: 5
+  split: stratified             # stratified by cancer type when a run has several cancer types
+  save_fold_models: true
+
+interpretation:
+  method: xgboost
+  top_features: 20
+  max_samples: 0                # 0 = explain all samples

@@ -25,6 +25,11 @@ def _data_arguments(parser, require_cancer=True, include_mutation_targets=True, 
     parser.add_argument("--expression-dataset", choices=EXPRESSION_DATASETS)
     parser.add_argument("--transform", choices=EXPRESSION_TRANSFORMS)
     parser.add_argument(
+        "--normalization",
+        choices=("none", "cpm"),
+        help="Library-size normalization before log transformation (default: none).",
+    )
+    parser.add_argument(
         "--log-offset",
         type=float,
         default=None,
@@ -129,6 +134,8 @@ def _data_overrides(args) -> dict:
         values["expression_dataset"] = args.expression_dataset
     if getattr(args, "transform", None):
         values["expression_transform"] = args.transform
+    if getattr(args, "normalization", None) is not None:
+        values["normalization"] = args.normalization
     if getattr(args, "log_offset", None) is not None:
         values["xena_log_offset"] = args.log_offset
     if getattr(args, "min_prevalence", None) is not None:
