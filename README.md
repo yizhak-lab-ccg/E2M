@@ -80,7 +80,7 @@ Run `e2m <command> --help` for additional options. Package defaults are defined 
 - **E2M version used for the reported analyses:** commit `b201b22`
 - **Trained models, predictions, and analysis outputs:** Zenodo archive (**DOI/link to be added**)
 
-The archive is intended to allow the reported results to be checked without retraining the models. For a pinned Linux GPU environment, see the [Dockerfile](Dockerfile) and [requirements-lock.txt](requirements-lock.txt).
+The archive is intended to allow the reported results to be checked without retraining the models. For a pinned Linux GPU environment, see the [Dockerfile](Dockerfile) and [requirements-lock.txt](requirements-lock.txt). Training and prediction times are in [RUNTIME.md](RUNTIME.md).
 
 ## Methods and data
 
